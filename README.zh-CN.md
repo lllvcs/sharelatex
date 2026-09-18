@@ -1,11 +1,11 @@
-# sharelatex-full（扩展版 Overleaf CE 镜像）
+# sharelatex（扩展版 Overleaf CE 镜像）
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![GitHub license](https://img.shields.io/github/license/lllvcs/sharelatex)](https://github.com/lllvcs/sharelatex/blob/master/LICENSE)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/lllvcs/sharelatex/build-test.yml)](https://github.com/lllvcs/sharelatex/actions/workflows/build-test.yml)
 [![GitHub issues](https://img.shields.io/github/issues/lllvcs/sharelatex)](https://github.com/lllvcs/sharelatex/issues)
-[![Docker Pulls](https://img.shields.io/docker/pulls/lvcs/sharelatex-full)](https://hub.docker.com/r/lvcs/sharelatex-full)
+[![Docker Pulls](https://img.shields.io/docker/pulls/lvcs/sharelatex)](https://hub.docker.com/r/lvcs/sharelatex)
 
 基于 [tuetenk0pp/sharelatex-full](https://github.com/tuetenk0pp/sharelatex-full)
 扩展的 [Overleaf 社区版](https://github.com/overleaf/overleaf) Docker 镜像。
@@ -32,7 +32,7 @@
 `config/overleaf.rc` 中设置镜像：
 
 ```sh
-OVERLEAF_IMAGE_NAME=lvcs/sharelatex-full
+OVERLEAF_IMAGE_NAME=lvcs/sharelatex
 ```
 
 也可以按照
@@ -42,7 +42,7 @@ OVERLEAF_IMAGE_NAME=lvcs/sharelatex-full
 ```yaml
 services:
     sharelatex:
-        image: lvcs/sharelatex-full
+        image: lvcs/sharelatex
 ```
 
 ### 使用 Docker Compose
@@ -52,7 +52,7 @@ services:
 
 使用官方仓库中的
 [docker-compose.yml](https://github.com/overleaf/overleaf/blob/main/docker-compose.yml)，
-把镜像改为 `lvcs/sharelatex-full` 即可。同时请留意
+把镜像改为 `lvcs/sharelatex` 即可。同时请留意
 [官方 Wiki](https://github.com/overleaf/overleaf/wiki/Release-Notes--4.x.x#manually-setting-up-mongodb-as-a-replica-set)
 中关于 MongoDB 副本集的额外说明。
 
@@ -157,7 +157,7 @@ services:
 | Workflow | 触发条件 | 推送目标 |
 | --- | --- | --- |
 | `build-test.yml` | 向 `master` 提交 pull request、手动触发 | –（构建并运行测试） |
-| `build-push-docker.yml` | 发布 release、手动触发 | Docker Hub 的 `lvcs/sharelatex-full` |
+| `build-push-docker.yml` | 发布 release、手动触发 | Docker Hub 的 `lvcs/sharelatex` |
 | `build-push-ghcr.yml` | 发布 release、手动触发 | GitHub Packages 的 `ghcr.io/<owner>/<repo>` |
 
 - **Docker Hub**：先创建仓库，然后在 *Settings → Secrets and variables →
@@ -173,9 +173,9 @@ services:
 build ...`）。
 
 ```sh
-docker build -t sharelatex-full .
+docker build -t sharelatex .
 docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
-    sharelatex-full -c "/bin/bash /tests/compile.sh"
+    sharelatex -c "/bin/bash /tests/compile.sh"
 ```
 
 ## 与上游镜像保持同步

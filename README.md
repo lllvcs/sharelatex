@@ -1,11 +1,11 @@
-# sharelatex-full (Overleaf CE, extended)
+# sharelatex (Overleaf CE, extended)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 [![GitHub license](https://img.shields.io/github/license/lllvcs/sharelatex)](https://github.com/lllvcs/sharelatex/blob/master/LICENSE)
 [![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/lllvcs/sharelatex/build-test.yml)](https://github.com/lllvcs/sharelatex/actions/workflows/build-test.yml)
 [![GitHub issues](https://img.shields.io/github/issues/lllvcs/sharelatex)](https://github.com/lllvcs/sharelatex/issues)
-[![Docker Pulls](https://img.shields.io/docker/pulls/lvcs/sharelatex-full)](https://hub.docker.com/r/lvcs/sharelatex-full)
+[![Docker Pulls](https://img.shields.io/docker/pulls/lvcs/sharelatex)](https://hub.docker.com/r/lvcs/sharelatex)
 
 An extended [Overleaf Community Edition](https://github.com/overleaf/overleaf)
 Docker image, based on
@@ -34,7 +34,7 @@ the [Quick-Start Guide](https://github.com/overleaf/toolkit/blob/master/doc/quic
 and set the image in `config/overleaf.rc`:
 
 ```sh
-OVERLEAF_IMAGE_NAME=lvcs/sharelatex-full
+OVERLEAF_IMAGE_NAME=lvcs/sharelatex
 ```
 
 Alternatively, use a `config/docker-compose.override.yml` file as described
@@ -43,7 +43,7 @@ Alternatively, use a `config/docker-compose.override.yml` file as described
 ```yaml
 services:
     sharelatex:
-        image: lvcs/sharelatex-full
+        image: lvcs/sharelatex
 ```
 
 ### Docker Compose
@@ -53,7 +53,7 @@ services:
 
 Use the [docker-compose.yml](https://github.com/overleaf/overleaf/blob/main/docker-compose.yml)
 provided in the [official GitHub](https://github.com/overleaf/overleaf), but
-change the image to `lvcs/sharelatex-full`. Also, note the additional
+change the image to `lvcs/sharelatex`. Also, note the additional
 instructions in the [official Wiki](https://github.com/overleaf/overleaf/wiki/Release-Notes--4.x.x#manually-setting-up-mongodb-as-a-replica-set).
 
 ## Required secret: `OVERLEAF_INVITE_TOKEN_SECRET`
@@ -168,7 +168,7 @@ above.
 | Workflow | Trigger | Publishes to |
 | --- | --- | --- |
 | `build-test.yml` | pull requests to `master`, manual | – (builds and runs the tests) |
-| `build-push-docker.yml` | release published, manual | `lvcs/sharelatex-full` on Docker Hub |
+| `build-push-docker.yml` | release published, manual | `lvcs/sharelatex` on Docker Hub |
 | `build-push-ghcr.yml` | release published, manual | `ghcr.io/<owner>/<repo>` (GitHub Packages) |
 
 - **Docker Hub**: create the repository and add the secrets `DOCKER_USER` and
@@ -188,9 +188,9 @@ image layer. On older setups, enable it explicitly (`DOCKER_BUILDKIT=1 docker
 build ...`).
 
 ```sh
-docker build -t sharelatex-full .
+docker build -t sharelatex .
 docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
-    sharelatex-full -c "/bin/bash /tests/compile.sh"
+    sharelatex -c "/bin/bash /tests/compile.sh"
 ```
 
 ## Staying in sync with the upstream image
