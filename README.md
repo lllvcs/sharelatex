@@ -56,6 +56,30 @@ provided in the [official GitHub](https://github.com/overleaf/overleaf), but
 change the image to `lvcs/sharelatex-full`. Also, note the additional
 instructions in the [official Wiki](https://github.com/overleaf/overleaf/wiki/Release-Notes--4.x.x#manually-setting-up-mongodb-as-a-replica-set).
 
+## Required secret: `OVERLEAF_INVITE_TOKEN_SECRET`
+
+> [!IMPORTANT]
+> Since Overleaf 6.2.0 the container refuses to start when this variable is
+> missing (it exits with code 101 after printing `Your configuration is
+> missing 1 required secret(s)`).
+
+Overleaf uses this secret to encrypt the sharing-link tokens stored in the
+database. Unlike the other internal secrets, which the container generates on
+its first start, it has to be provided by you - and it must stay stable across
+restarts and upgrades: if it changes, all previously issued sharing links
+become invalid. Values shorter than 16 characters are rejected.
+
+Generate a value with:
+
+```sh
+openssl rand -base64 32
+```
+
+- **Overleaf Toolkit**: add `OVERLEAF_INVITE_TOKEN_SECRET=<value>` to
+  `config/variables.env` and restart with `bin/up`.
+- **Docker Compose**: add it to the environment of the `sharelatex` service
+  and restart the container.
+
 ## OIDC single sign-on
 
 The image can authenticate users against an OpenID Connect provider (Keycloak,

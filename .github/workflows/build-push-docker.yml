@@ -9,7 +9,7 @@ env:
   # Use docker.io for Docker Hub if empty
   REGISTRY: docker.io
   # github.repository as <account>/<repo>
-  IMAGE_NAME: lvcs/sharelatex-full
+  IMAGE_NAME: lvcs/sharelatex
 
 jobs:
   build:

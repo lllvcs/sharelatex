@@ -56,6 +56,26 @@ services:
 [官方 Wiki](https://github.com/overleaf/overleaf/wiki/Release-Notes--4.x.x#manually-setting-up-mongodb-as-a-replica-set)
 中关于 MongoDB 副本集的额外说明。
 
+## 必需密钥：`OVERLEAF_INVITE_TOKEN_SECRET`
+
+> [!IMPORTANT]
+> 自 Overleaf 6.2.0 起，未设置该变量时容器会拒绝启动（退出码 101，并提示
+> `Your configuration is missing 1 required secret(s)`）。
+
+Overleaf 用这个密钥加密数据库中保存的分享链接令牌。与容器首次启动时自动生成的
+其它内部密钥不同，它必须由你提供，并且要在重启、升级后保持不变：一旦更换，此前
+生成的所有分享链接都会失效。长度不足 16 个字符的值会被拒绝。
+
+生成方式：
+
+```sh
+openssl rand -base64 32
+```
+
+- **Overleaf Toolkit**：在 `config/variables.env` 中添加
+  `OVERLEAF_INVITE_TOKEN_SECRET=<值>`，然后执行 `bin/up` 重启。
+- **Docker Compose**：添加到 `sharelatex` 服务的环境变量中，然后重启容器。
+
 ## OIDC 单点登录
 
 本镜像可以让用户通过 OpenID Connect 提供方（Keycloak、Authentik、Okta、
