@@ -3,6 +3,11 @@
 # Please see the documentation for all configuration options:
 # https://docs.github.com/github/administering-a-repository/configuration-options-for-dependency-updates
 
+# NOTE: bumping `sharelatex/sharelatex` changes the application version the
+# OIDC overlay in ./overlay is written against. The Dockerfile verifies the
+# checksum of the patched files and fails the build in that case, so such a PR
+# has to be combined with a re-based overlay (see overlay/README.md).
+
 version: 2
 updates:
   - package-ecosystem: "docker"

@@ -1,0 +1,3 @@
+# The image is built on Linux and the shell scripts run inside the container,
+# so keep line endings LF in the repository and in checkouts.
+* text=auto eol=lf
