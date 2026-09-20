@@ -16,6 +16,7 @@ import AdminAuthorizationHelper from '../Features/Helpers/AdminAuthorizationHelp
 import { addOptionalCleanupHandlerAfterDrainingConnections } from './GracefulShutdown.mjs'
 import { sanitizeSessionUserForFrontEnd } from './FrontEndUser.mjs'
 import { expressify } from '@overleaf/promise-utils'
+import { oidcIsConfigured } from '../Features/Authentication/OidcDiscovery.mjs'
 
 const {
   canRedirectToAdminDomain,
@@ -127,8 +128,8 @@ export default async function (webRouter, privateApiRouter, publicApiRouter) {
   webRouter.use(function (req, res, next) {
     res.locals.local_login_enabled =
       (process.env.OVERLEAF_ENABLE_LOCAL_LOGIN || 'true') === 'true'
-    res.locals.oidc_login_enabled =
-      process.env.OVERLEAF_OIDC_ISSUER !== undefined
+    // only offer the button when the strategy is actually registered
+    res.locals.oidc_login_enabled = oidcIsConfigured(process.env)
     res.locals.login_info_text =
       process.env.OVERLEAF_LOGIN_INFO_TEXT ||
       'Welcome to Overleaf! Log in to your account below.'

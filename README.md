@@ -151,14 +151,23 @@ not set, so **every other `OVERLEAF_OIDC_*` variable still overrides** what the
 document says. `OVERLEAF_OIDC_ISSUER` itself is optional as well: the issuer
 from the document enables OIDC login.
 
+The document itself may be pasted as well (the value then starts with `{`),
+which helps with providers that do not document where their discovery URL
+lives. Scopes are adapted to the provider: the default `openid profile email`
+is reduced to what the document lists in `scopes_supported` (`openid` is always
+requested, and an explicit `OVERLEAF_OIDC_SCOPE` is never changed) - providers
+such as Synology's SSO server, which do not support `profile`, reject the
+authorization request otherwise.
+
 The document is not fetched at all when the issuer and
 `OVERLEAF_OIDC_AUTHORIZATION_URL`, `OVERLEAF_OIDC_TOKEN_URL` and
 `OVERLEAF_OIDC_USERINFO_URL` are all set, which keeps a fully pinned
 configuration independent of the provider being reachable while the container
 starts. Otherwise the fetch is retried five times with an increasing delay
-(about 30 seconds in total) and the container refuses to start when the
-document cannot be read, instead of coming up with a login that cannot work;
-the reason is written to the container log.
+(about 30 seconds in total). If the document still cannot be read, or if it
+does not carry the endpoints, the reason is written to the container log and
+**OIDC login stays disabled - the rest of Overleaf keeps working**, so a wrong
+provider URL does not take the whole instance down.
 
 ### Redirect URI (several domains and reverse proxies)
 
@@ -186,10 +195,22 @@ OVERLEAF_OIDC_CALLBACK_URLS: https://latex.example.com/login/oidc/callback, http
 ```
 
 With `OVERLEAF_OIDC_CALLBACK_URLS` the entry whose host name matches the request
-is used (the port is ignored); an entry that is a plain path such as
+is used; the port decides when both the entry and the request name one, and an
+entry without a port matches every port. An entry that is a plain path such as
 `/login/oidc/callback` applies to every host name. Host names that no entry
 matches fall back to the derived URI, which is what an unconfigured deployment
 uses anyway.
+
+**Non-standard ports.** The derived URI keeps the port when any of the headers
+carries it - `Host`, `X-Forwarded-Host` or `X-Forwarded-Port`. Overleaf's own
+nginx, however, passes the host without the port (`proxy_set_header Host $host`,
+and `$host` drops the port), so an instance that is reached on a non-standard
+port (for example `http://192.168.1.10:8080`) either needs a proxy that sends
+`X-Forwarded-Port`, or the port has to be part of a pinned URI:
+
+```yaml
+OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https://latex.example.com/login/oidc/callback
+```
 
 ### Provider setup
 
@@ -269,6 +290,23 @@ All variables of the official image remain available (see the
 [Overleaf documentation](https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/overleaf-toolkit-configuration)).
 The variables added by this image are the ones documented in the OIDC section
 above.
+
+## Troubleshooting
+
+### Log lines that are not errors
+
+- `err={"message":"The \`punycode\` module is deprecated ...","code":"DEP0040"}`
+  together with `msg=Warning details`, printed on every start: a deprecation
+  warning from the dependencies of the bundled Overleaf version (Node 24 warns
+  about the built-in `punycode` module). Overleaf's logger sends `process`
+  warnings to its error channel as well, which is why it looks like an error;
+  nothing is broken. Add `NODE_OPTIONS=--no-deprecation` (for example to the
+  toolkit's `config/variables.env`) to keep it out of the log.
+- Lines in which several timestamps and a JSON object are squeezed together are
+  an artifact of how the container writes the logs of several processes into
+  one stream; the same message is fine, just interleaved.
+- `*** Running /etc/my_init.pre_shutdown.d/00_close_site ...` appears when the
+  container is being stopped, it is not a crash.
 
 ## Building the image
 

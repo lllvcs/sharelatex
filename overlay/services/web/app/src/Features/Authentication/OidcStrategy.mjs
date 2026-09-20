@@ -82,7 +82,11 @@ export class OidcStrategy extends OAuth2Strategy {
         }
         done(null, {
           id: claims.sub,
-          username: claims.preferred_username || claims.email,
+          // `username` is not the standard claim (that is
+          // `preferred_username`), but providers like Synology's SSO server
+          // only publish `username`
+          username:
+            claims.preferred_username || claims.username || claims.email,
           displayName:
             claims.name ||
             [claims.given_name, claims.family_name].filter(Boolean).join(' '),

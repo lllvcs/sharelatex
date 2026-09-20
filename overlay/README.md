@@ -72,9 +72,9 @@ docker rm tmp
 | `app/src/Features/Authentication/OidcStrategy.mjs` | **new file**: minimal OIDC strategy on top of `passport-oauth2`; fetches the profile from the userinfo endpoint, resolves the redirect URI per request |
 | `app/src/Features/Authentication/OidcCallbackUrl.mjs` | **new file**: picks the redirect URI for a request (automatic/derived, one URL, or a list of URLs); no imports besides `node:url`, so `tests/oidc-callback-url.test.mjs` can test it on its own |
 | `app/src/Features/Authentication/OidcDiscovery.mjs` | **new file**: reads the provider's discovery document (`OVERLEAF_OIDC_WELL_KNOWN_URL`) and fills the unset `OVERLEAF_OIDC_*` endpoint variables; only imports `node:timers/promises`, tested by `tests/oidc-well-known.test.mjs` |
-| `app/src/Features/Authentication/AuthenticationController.mjs` | adds `oidcLogin`, `oidcLoginCallback`, `verifyOpenIDConnect`, `extractOidcIdFromProfile`, `ensureOidcLoginEnabled`; extracts `createPassportCallback`; disables local login when `OVERLEAF_ENABLE_LOCAL_LOGIN=false` |
-| `app/src/infrastructure/Server.mjs` | registers the `oidc` passport strategy when `OVERLEAF_OIDC_ISSUER` is set, passing `OVERLEAF_OIDC_CALLBACK_URL(S)` and Overleaf's `behindProxy` setting |
-| `app/src/infrastructure/ExpressLocals.mjs` | exposes the login/OIDC configuration to the views |
+| `app/src/Features/Authentication/AuthenticationController.mjs` | adds `oidcLogin`, `oidcLoginCallback`, `verifyOpenIDConnect`, `extractOidcIdFromProfile`, `ensureOidcLoginEnabled`; extracts `createPassportCallback`; disables local login when `OVERLEAF_ENABLE_LOCAL_LOGIN=false`; `ensureOidcLoginEnabled` accepts the request only when the strategy is registered (`oidcIsConfigured`) |
+| `app/src/infrastructure/Server.mjs` | reads the discovery document when `OVERLEAF_OIDC_WELL_KNOWN_URL` is set and registers the `oidc` passport strategy when the configuration is usable (`oidcIsConfigured`), passing `OVERLEAF_OIDC_CALLBACK_URL(S)` and Overleaf's `behindProxy` setting |
+| `app/src/infrastructure/ExpressLocals.mjs` | exposes the login/OIDC configuration to the views; the SSO button is only offered when the strategy is registered (`oidcIsConfigured`) |
 | `app/src/infrastructure/Features.mjs` | counts OIDC as an external authentication system (hides the registration page unless `OVERLEAF_ENABLE_REGISTRATION` overrides it); reads the issuer when it is asked instead of at import time, so the discovery document can supply it |
 | `app/src/models/User.mjs` | adds the `oidcIdentifier` field |
 | `app/src/Features/User/UserPrimaryEmailCheckHandler.mjs` | skips the primary email check for OIDC users (the mail address is asserted by the provider) |
@@ -103,16 +103,29 @@ docker rm tmp
   several host names work without configuration; the same value is used for the
   authorization request and the token exchange because both go through
   `strategy.authenticate()`. `OVERLEAF_OIDC_CALLBACK_URL` (one URL) and
-  `OVERLEAF_OIDC_CALLBACK_URLS` (a list, matched by host name) pin the value
-  for providers that require an exact match with the registered URI.
+  `OVERLEAF_OIDC_CALLBACK_URLS` (a list, matched by host name, with the port
+  deciding when both sides name one) pin the value for providers that require an
+  exact match with the registered URI. `requestOrigin()` prefers the header that
+  carries a port (`Host`, `X-Forwarded-Host` or `X-Forwarded-Port`), because the
+  CE nginx sets both host headers from nginx's `$host`, which drops the port -
+  for an instance on a non-standard port the URI therefore has to be pinned, or
+  the proxy has to send `X-Forwarded-Port`.
 - `OVERLEAF_OIDC_WELL_KNOWN_URL` is resolved while the server starts
   (`applyWellKnownConfiguration()`, awaited in `Server.mjs` before the passport
   strategy is registered). The document's values are written into
   `process.env` as defaults, so all the other code keeps reading plain
   environment variables and explicit values keep winning. Nothing is fetched
-  when the three endpoint variables are set by hand; a document that cannot be
-  read fails the start (after five retries) instead of leaving behind a login
-  that cannot work. Because the issuer, and with it the "OIDC is enabled" flag,
-  may come from the document, module-level reads of
-  `process.env.OVERLEAF_OIDC_ISSUER` had to become call-time reads (see
-  `Features.mjs`); the other readers already evaluate it per request.
+  when the issuer and the three endpoint variables are set by hand. A document
+  that cannot be read, or that does not carry the endpoints, is **logged** and
+  leaves OIDC login disabled (`oidcIsConfigured()` gates the strategy
+  registration), so a misconfigured provider cannot keep the whole application
+  from starting. The variable also accepts the document itself (a value
+  starting with `{`), and the default scope is reduced to what the document
+  lists in `scopes_supported` (an explicit `OVERLEAF_OIDC_SCOPE` is left
+  alone), because providers such as Synology's SSO server reject unsupported
+  scopes. `applyDocument()` validates before it writes anything, so a
+  rejected document never leaves a half-applied configuration behind. Because
+  the issuer, and with it the "OIDC is enabled" flag, may come from the
+  document, module-level reads of `process.env.OVERLEAF_OIDC_ISSUER` had to
+  become call-time reads (see `Features.mjs`); the other readers already
+  evaluate it per request.

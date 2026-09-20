@@ -143,11 +143,18 @@ OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm/.well-known
 `OVERLEAF_OIDC_*` 变量都会覆盖文档中的值。`OVERLEAF_OIDC_ISSUER` 同样可以不填：
 文档里的 issuer 也会启用 OIDC 登录。
 
+也可以**直接把文档 JSON 粘贴进变量**（值以 `{` 开头即可）——有些提供方没有说明
+自己的 discovery 地址在哪里，这样省事。scope 会按提供方能力自动适配：默认的
+`openid profile email` 会剔除文档 `scopes_supported` 里没有的项（`openid` 始终
+请求；显式设置的 `OVERLEAF_OIDC_SCOPE` 不会被改动）——例如群晖 SSO Server 不支持
+`profile`，不改就会被授权请求拒绝。
+
 当 `OVERLEAF_OIDC_ISSUER` 以及 `OVERLEAF_OIDC_AUTHORIZATION_URL`、
 `OVERLEAF_OIDC_TOKEN_URL`、`OVERLEAF_OIDC_USERINFO_URL` 都已设置时，**完全不会
 去请求该文档**，这样「全部写死」的配置不依赖提供方在容器启动时可达。否则会以
-递增间隔重试 5 次（合计约 30 秒），仍失败则容器拒绝启动（而不是带着一个无法工作
-的登录入口启动），原因会写入容器日志。
+递增间隔重试 5 次（合计约 30 秒）。若仍然读不到文档、或文档里缺少所需端点，原因
+会写入容器日志，**OIDC 登录保持关闭，Overleaf 的其它功能照常工作**——不会因为
+提供方地址写错就让整个站点不可用。
 
 ### 回调地址（多域名与反向代理）
 
@@ -171,9 +178,20 @@ OVERLEAF_OIDC_CALLBACK_URL: https://latex.example.com/login/oidc/callback
 OVERLEAF_OIDC_CALLBACK_URLS: https://latex.example.com/login/oidc/callback, https://tex.example.org/login/oidc/callback
 ```
 
-使用 `OVERLEAF_OIDC_CALLBACK_URLS` 时，会选用「域名与当前请求匹配」的那一条
-（忽略端口）；只写路径（例如 `/login/oidc/callback`）的条目对任何域名都生效；
-没有匹配到任何条目的域名，则回退到按请求自动推导的地址（也就是未配置时的行为）。
+使用 `OVERLEAF_OIDC_CALLBACK_URLS` 时，会选用「域名与当前请求匹配」的那一条：
+**当条目与请求都写了端口时按端口比较**，条目不写端口则匹配任意端口；只写路径
+（例如 `/login/oidc/callback`）的条目对任何域名都生效；没有匹配到任何条目的域名，
+则回退到按请求自动推导的地址（也就是未配置时的行为）。
+
+**非标准端口。** 只要请求头里带了端口（`Host`、`X-Forwarded-Host` 或
+`X-Forwarded-Port`），推导出的地址就会带上它。但 Overleaf 自带的 nginx 用
+`proxy_set_header Host $host`，而 nginx 的 `$host` **会丢掉端口**；因此如果你的
+站点是通过非标准端口访问（例如 `http://192.168.1.10:8080`），要么让前置代理发送
+`X-Forwarded-Port`，要么把端口写进固定的回调地址里：
+
+```yaml
+OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https://latex.example.com/login/oidc/callback
+```
 
 ### 提供方配置
 
@@ -240,6 +258,21 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 官方镜像支持的所有环境变量均保持不变（参见
 [Overleaf 文档](https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/overleaf-toolkit-configuration)）。
 本镜像新增的变量即上文 OIDC 章节中列出的那些。
+
+## 常见疑问
+
+### 日志里这些不是错误
+
+- 每次启动都出现的
+  `err={"message":"The \`punycode\` module is deprecated ...","code":"DEP0040"}`
+  与 `msg=Warning details`：这是**上游依赖**的弃用警告（Node 24 对内置 `punycode`
+  模块的提示）。Overleaf 的 logger 会把 `process` 警告也写到错误通道，所以看起来
+  像报错，实际不影响功能。若不想看到它，可加 `NODE_OPTIONS=--no-deprecation`
+  （例如写进 toolkit 的 `config/variables.env`）。
+- 一行里挤了多个时间戳和一段 JSON：这是容器把多个进程的日志写进同一输出流的
+  交错现象，内容本身没问题。
+- `*** Running /etc/my_init.pre_shutdown.d/00_close_site ...`：这是容器**被停止**
+  时的收尾流程，不是崩溃。
 
 ## 构建镜像
 

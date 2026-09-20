@@ -1,14 +1,16 @@
 // OpenID Connect discovery (OpenID Connect Discovery 1.0).
 //
 // OVERLEAF_OIDC_WELL_KNOWN_URL configures the endpoints that are not set
-// explicitly.  It takes either the discovery document itself
+// explicitly.  It takes the URL of the provider's discovery document
 //
 //   https://idp.example.com/realms/myrealm/.well-known/openid-configuration
 //
-// or just the issuer, in which case /.well-known/openid-configuration is
-// appended:
+// the issuer, in which case /.well-known/openid-configuration is appended
 //
 //   https://idp.example.com/realms/myrealm
+//
+// or the document itself as JSON (providers hand it out as JSON, and copying
+// it into the variable is what people try when they are unsure about the URL).
 //
 // The values of the document are written into the environment as defaults, so
 // the rest of the application keeps reading the plain OVERLEAF_OIDC_*
@@ -21,6 +23,8 @@
 import { setTimeout as sleepFor } from 'node:timers/promises'
 
 const WELL_KNOWN_PATH = '/.well-known/openid-configuration'
+
+export const DEFAULT_SCOPE = 'openid profile email'
 
 const ENDPOINT_VARIABLES = {
   authorization_endpoint: 'OVERLEAF_OIDC_AUTHORIZATION_URL',
@@ -55,8 +59,52 @@ export function isCompletelyConfigured(env) {
   )
 }
 
+// The endpoints passport-oauth2 needs to register the strategy.
+export function missingOidcEndpoints(env) {
+  return Object.values(ENDPOINT_VARIABLES).filter(variable => !env[variable])
+}
+
+// Whether OIDC login can be registered: an issuer enables it, and the three
+// endpoints have to be known. Called after the discovery document was read, so
+// an incomplete configuration (or a document that could not be read) leaves
+// the application running without OIDC instead of failing to start.
+export function oidcIsConfigured(env) {
+  return (
+    Boolean(env.OVERLEAF_OIDC_ISSUER) && missingOidcEndpoints(env).length === 0
+  )
+}
+
 function isFilled(value) {
   return typeof value === 'string' && value !== ''
+}
+
+// The scopes to request: the default is "openid profile email", and a provider
+// that does not list one of them in scopes_supported (Synology's SSO server,
+// for example, only supports "openid email groups") rejects the authorization
+// request. Scopes that the document does not list are left out; "openid" is
+// always requested, and an explicit OVERLEAF_OIDC_SCOPE is never touched.
+export function scopesForDocument(document, env = process.env) {
+  const requested = String(env.OVERLEAF_OIDC_SCOPE || DEFAULT_SCOPE)
+    .split(/\s+/)
+    .filter(Boolean)
+
+  if (env.OVERLEAF_OIDC_SCOPE) {
+    return { scopes: requested, dropped: [] }
+  }
+  const supported = Array.isArray(document && document.scopes_supported)
+    ? document.scopes_supported.map(String)
+    : null
+  if (!supported) {
+    return { scopes: requested, dropped: [] }
+  }
+
+  const scopes = requested.filter(
+    scope => scope === 'openid' || supported.includes(scope)
+  )
+  return {
+    scopes,
+    dropped: requested.filter(scope => !scopes.includes(scope)),
+  }
 }
 
 // Fills the environment from the document, without overwriting anything that
@@ -89,6 +137,12 @@ export function applyDocument(document, env = process.env) {
   if (!env.OVERLEAF_OIDC_ISSUER) {
     env.OVERLEAF_OIDC_ISSUER = document.issuer
     applied.OVERLEAF_OIDC_ISSUER = document.issuer
+  }
+
+  const { scopes } = scopesForDocument(document, env)
+  if (scopes.join(' ') !== (env.OVERLEAF_OIDC_SCOPE || DEFAULT_SCOPE)) {
+    env.OVERLEAF_OIDC_SCOPE = scopes.join(' ')
+    applied.OVERLEAF_OIDC_SCOPE = env.OVERLEAF_OIDC_SCOPE
   }
   return applied
 }
@@ -135,20 +189,48 @@ export async function applyWellKnownConfiguration(options = {}) {
   if (!wellKnownUrl) {
     return null
   }
+  const value = String(wellKnownUrl).trim()
 
-  const documentUrl = wellKnownDocumentUrl(wellKnownUrl)
   if (isCompletelyConfigured(env)) {
-    info({ documentUrl }, 'OIDC: endpoints are configured, not reading the discovery document')
+    info(
+      { wellKnownUrl: value },
+      'OIDC: endpoints are configured, not reading the discovery document'
+    )
     return null
   }
+
+  // The document itself may be configured instead of its URL: providers hand
+  // it out as JSON, and copying it into the variable is what people try when
+  // they are not sure where the URL lives.
+  if (value.startsWith('{')) {
+    let document
+    try {
+      document = JSON.parse(value)
+    } catch (err) {
+      throw new Error(
+        'OVERLEAF_OIDC_WELL_KNOWN_URL contains something that starts like ' +
+          `JSON but cannot be parsed: ${err.message}`
+      )
+    }
+    return applyOrDefault(info, warn, document, env, 'the configured document')
+  }
+
+  if (!/^https?:\/\//i.test(value)) {
+    throw new Error(
+      'OVERLEAF_OIDC_WELL_KNOWN_URL has to be a URL - either the discovery ' +
+        'document (https://<provider>/.well-known/openid-configuration) or ' +
+        'the issuer it is derived from - or the discovery document itself ' +
+        '(JSON)'
+    )
+  }
+
+  const documentUrl = wellKnownDocumentUrl(value)
 
   let delay = initialDelayMs
   for (let attempt = 1; ; attempt++) {
     try {
       const document = await fetchDocument(documentUrl, fetchImpl, timeoutMs)
-      const applied = applyDocument(document, env)
-      info({ documentUrl, applied }, 'OIDC: configured from the discovery document')
-      return document
+      return applyOrDefault(info, warn, document, env, documentUrl)
     } catch (err) {
       if (err.permanent || attempt >= attempts) {
         throw new Error(
@@ -163,4 +245,19 @@ export async function applyWellKnownConfiguration(options = {}) {
       delay *= 2
     }
   }
+}
+
+// Applies a document that was read (or configured) and reports what happened;
+// returns the document as the caller's result.
+function applyOrDefault(info, warn, document, env, source) {
+  const { dropped } = scopesForDocument(document, env)
+  if (dropped.length > 0) {
+    warn(
+      { dropped, kept: env.OVERLEAF_OIDC_SCOPE || DEFAULT_SCOPE },
+      'OIDC: leaving out scopes that the provider does not support'
+    )
+  }
+  const applied = applyDocument(document, env)
+  info({ source, applied }, 'OIDC: configured from the discovery document')
+  return document
 }

@@ -31,6 +31,9 @@ const {
   applyDocument,
   applyWellKnownConfiguration,
   missingEndpoints,
+  missingOidcEndpoints,
+  oidcIsConfigured,
+  scopesForDocument,
   wellKnownDocumentUrl,
 } = await import(pathToFileURL(modulePath).href)
 
@@ -43,6 +46,25 @@ const DOCUMENT = {
   userinfo_endpoint:
     'https://idp.example.com/realms/myrealm/protocol/openid-connect/userinfo',
   scopes_supported: ['openid', 'profile', 'email'],
+}
+
+// The document of Synology's SSO server: it does not support the `profile`
+// scope, uses a non-standard `username` claim and lists the endpoints under
+// the /webman/sso/ prefix.
+const SYNO_DOCUMENT = {
+  authorization_endpoint: 'https://idp.example.com/webman/sso/SSOOauth.cgi',
+  claims_supported: ['aud', 'email', 'exp', 'groups', 'iat', 'iss', 'sub', 'username'],
+  code_challenge_methods_supported: ['S256', 'plain'],
+  grant_types_supported: ['authorization_code', 'implicit'],
+  id_token_signing_alg_values_supported: ['RS256'],
+  issuer: 'https://idp.example.com/webman/sso',
+  jwks_uri: 'https://idp.example.com/webman/sso/openid-jwks.json',
+  response_types_supported: ['code', 'code id_token', 'id_token', 'id_token token'],
+  scopes_supported: ['email', 'groups', 'openid'],
+  subject_types_supported: ['public'],
+  token_endpoint: 'https://idp.example.com/webman/sso/SSOAccessToken.cgi',
+  token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+  userinfo_endpoint: 'https://idp.example.com/webman/sso/SSOUserInfo.cgi',
 }
 
 function jsonResponse(body, status = 200) {
@@ -154,6 +176,106 @@ test('a document without an issuer is rejected', () => {
   const env = { OVERLEAF_OIDC_ISSUER: 'https://issuer.example.com' }
   applyDocument(withoutIssuer, env)
   assert.equal(env.OVERLEAF_OIDC_TOKEN_URL, DOCUMENT.token_endpoint)
+})
+
+test('OIDC is only usable with an issuer and all three endpoints', () => {
+  assert.equal(oidcIsConfigured({}), false)
+  assert.equal(
+    oidcIsConfigured({ OVERLEAF_OIDC_ISSUER: 'https://idp.example.com' }),
+    false
+  )
+  assert.deepEqual(
+    missingOidcEndpoints({ OVERLEAF_OIDC_ISSUER: 'https://idp.example.com' }),
+    [
+      'OVERLEAF_OIDC_AUTHORIZATION_URL',
+      'OVERLEAF_OIDC_TOKEN_URL',
+      'OVERLEAF_OIDC_USERINFO_URL',
+    ]
+  )
+  assert.equal(
+    oidcIsConfigured({
+      OVERLEAF_OIDC_ISSUER: 'https://idp.example.com',
+      OVERLEAF_OIDC_AUTHORIZATION_URL: 'https://idp.example.com/auth',
+      OVERLEAF_OIDC_TOKEN_URL: 'https://idp.example.com/token',
+      OVERLEAF_OIDC_USERINFO_URL: 'https://idp.example.com/me',
+    }),
+    true
+  )
+})
+
+test('a document that cannot be used leaves the environment untouched', () => {
+  // an incomplete document must not end up half-applied: OIDC stays off
+  const incomplete = { ...DOCUMENT }
+  delete incomplete.userinfo_endpoint
+  const env = { OVERLEAF_OIDC_WELL_KNOWN_URL: 'https://idp.example.com' }
+
+  assert.throws(() => applyDocument(incomplete, env), /does not provide/)
+  assert.deepEqual(env, { OVERLEAF_OIDC_WELL_KNOWN_URL: 'https://idp.example.com' })
+  assert.equal(oidcIsConfigured(env), false)
+})
+
+test('scopes the provider does not support are left out', () => {
+  const { scopes, dropped } = scopesForDocument(SYNO_DOCUMENT, {})
+  assert.deepEqual(scopes, ['openid', 'email'])
+  assert.deepEqual(dropped, ['profile'])
+
+  const env = {}
+  applyDocument(SYNO_DOCUMENT, env)
+  assert.equal(env.OVERLEAF_OIDC_SCOPE, 'openid email')
+  assert.equal(env.OVERLEAF_OIDC_TOKEN_URL, SYNO_DOCUMENT.token_endpoint)
+  assert.equal(env.OVERLEAF_OIDC_USERINFO_URL, SYNO_DOCUMENT.userinfo_endpoint)
+})
+
+test('an explicit scope and documents without scopes_supported are untouched', () => {
+  assert.deepEqual(
+    scopesForDocument(SYNO_DOCUMENT, { OVERLEAF_OIDC_SCOPE: 'openid profile email' }),
+    { scopes: ['openid', 'profile', 'email'], dropped: [] }
+  )
+
+  const withoutScopes = { ...DOCUMENT }
+  delete withoutScopes.scopes_supported
+  assert.deepEqual(scopesForDocument(withoutScopes, {}), {
+    scopes: ['openid', 'profile', 'email'],
+    dropped: [],
+  })
+
+  // openid is always requested, even if the document does not list it
+  assert.deepEqual(
+    scopesForDocument({ scopes_supported: ['email'] }, {}).scopes,
+    ['openid', 'email']
+  )
+})
+
+test('the document itself may be configured instead of its URL', async () => {
+  const { calls, fetchImpl } = stubFetch([])
+  const env = { OVERLEAF_OIDC_WELL_KNOWN_URL: JSON.stringify(SYNO_DOCUMENT) }
+
+  const document = await applyWellKnownConfiguration({ env, fetchImpl, logger })
+
+  assert.equal(calls.length, 0)
+  assert.equal(document.issuer, SYNO_DOCUMENT.issuer)
+  assert.equal(env.OVERLEAF_OIDC_ISSUER, SYNO_DOCUMENT.issuer)
+  assert.equal(env.OVERLEAF_OIDC_SCOPE, 'openid email')
+})
+
+test('a value that is neither a URL nor JSON is reported clearly', async () => {
+  const { fetchImpl } = stubFetch([])
+  await assert.rejects(
+    applyWellKnownConfiguration({
+      env: { OVERLEAF_OIDC_WELL_KNOWN_URL: 'idp.example.com/webman/sso' },
+      fetchImpl,
+      logger,
+    }),
+    /has to be a URL/
+  )
+  await assert.rejects(
+    applyWellKnownConfiguration({
+      env: { OVERLEAF_OIDC_WELL_KNOWN_URL: '{not json' },
+      fetchImpl,
+      logger,
+    }),
+    /starts like JSON but cannot be parsed/
+  )
 })
 
 test('nothing is fetched without OVERLEAF_OIDC_WELL_KNOWN_URL', async () => {

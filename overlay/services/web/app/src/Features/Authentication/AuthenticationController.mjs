@@ -35,6 +35,7 @@ import { expressify, promisify } from '@overleaf/promise-utils'
 import { handleAuthenticateErrors } from './AuthenticationErrors.mjs'
 import EmailHelper from '../Helpers/EmailHelper.mjs'
 import SplitTestHandler from '../SplitTests/SplitTestHandler.mjs'
+import { oidcIsConfigured } from './OidcDiscovery.mjs'
 
 const { hasAdminAccess } = AdminAuthorizationHelper
 
@@ -688,7 +689,9 @@ const AuthenticationController = {
   },
 
   ensureOidcLoginEnabled(res) {
-    if (process.env.OVERLEAF_OIDC_ISSUER === undefined) {
+    // the strategy is only registered when the issuer and the endpoints are
+    // known, so asking for it otherwise would fail with "unknown strategy"
+    if (!oidcIsConfigured(process.env)) {
       res.status(403).json({
         message: {
           type: 'error',

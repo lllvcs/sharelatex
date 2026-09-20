@@ -74,15 +74,94 @@ test('a list of callback URLs is matched by host name', () => {
   )
 })
 
-test('host names are matched case-insensitively and without the port', () => {
+test('host names are matched case-insensitively', () => {
   const callbackURLs = ['https://One.Example.com:8443/login/oidc/callback']
   assert.equal(
-    resolveCallbackURL(request({ host: 'ONE.example.com' }), { callbackURLs }),
+    resolveCallbackURL(request({ host: 'ONE.example.com:8443' }), { callbackURLs }),
+    callbackURLs[0]
+  )
+  // no port in the request (a proxy may have dropped it): the entry still
+  // matches, its own port is used
+  assert.equal(
+    resolveCallbackURL(request({ host: 'one.example.com' }), { callbackURLs }),
+    callbackURLs[0]
+  )
+})
+
+test('the port decides when both sides name one', () => {
+  const callbackURLs = [
+    'http://192.168.1.10:8080/login/oidc/callback',
+    'http://192.168.1.10:9090/login/oidc/callback',
+  ]
+  assert.equal(
+    resolveCallbackURL(request({ host: '192.168.1.10:8080' }), { callbackURLs }),
     callbackURLs[0]
   )
   assert.equal(
-    resolveCallbackURL(request({ host: 'one.example.com:443' }), { callbackURLs }),
+    resolveCallbackURL(request({ host: '192.168.1.10:9090' }), { callbackURLs }),
+    callbackURLs[1]
+  )
+  // a port that no entry names falls back to the derived URL
+  assert.equal(
+    resolveCallbackURL(request({ host: '192.168.1.10:7070' }), { callbackURLs }),
+    DEFAULT_CALLBACK_PATH
+  )
+})
+
+test('an entry without a port matches every port', () => {
+  const callbackURLs = ['https://overleaf.example.com/login/oidc/callback']
+  assert.equal(
+    resolveCallbackURL(request({ host: 'overleaf.example.com:8443' }), { callbackURLs }),
     callbackURLs[0]
+  )
+})
+
+test('the port survives in the derived origin', () => {
+  // plain request on a non-standard port
+  assert.equal(
+    requestOrigin(request({ host: '192.168.1.10:8080' }), false),
+    'http://192.168.1.10:8080'
+  )
+  // the proxy forwarded the host without the port, but the Host header has it
+  assert.equal(
+    requestOrigin(
+      request({
+        host: '192.168.1.10:8080',
+        headers: { 'x-forwarded-host': '192.168.1.10' },
+      }),
+      true
+    ),
+    'http://192.168.1.10:8080'
+  )
+  // only X-Forwarded-Port carries it
+  assert.equal(
+    requestOrigin(
+      request({
+        host: 'overleaf.example.com',
+        protocol: 'http',
+        headers: {
+          'x-forwarded-host': 'overleaf.example.com',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-port': '8443',
+        },
+      }),
+      true
+    ),
+    'https://overleaf.example.com:8443'
+  )
+  // default ports are not repeated
+  assert.equal(
+    requestOrigin(
+      request({
+        headers: {
+          'x-forwarded-host': 'overleaf.example.com',
+          'x-forwarded-proto': 'https',
+          'x-forwarded-port': '443',
+        },
+      }),
+      true
+    ),
+    'https://overleaf.example.com'
   )
 })
 

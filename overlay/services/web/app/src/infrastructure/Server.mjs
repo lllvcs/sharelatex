@@ -29,7 +29,7 @@ import UserSessionsManager from '../Features/User/UserSessionsManager.mjs'
 import AuthenticationController from '../Features/Authentication/AuthenticationController.mjs'
 import { OidcStrategy } from '../Features/Authentication/OidcStrategy.mjs'
 import { parseCallbackUrls } from '../Features/Authentication/OidcCallbackUrl.mjs'
-import { applyWellKnownConfiguration } from '../Features/Authentication/OidcDiscovery.mjs'
+import { applyWellKnownConfiguration, missingOidcEndpoints, oidcIsConfigured, DEFAULT_SCOPE } from '../Features/Authentication/OidcDiscovery.mjs'
 import SessionManager from '../Features/Authentication/SessionManager.mjs'
 import AdminAuthorizationHelper from '../Features/Helpers/AdminAuthorizationHelper.mjs'
 import Modules from './Modules.mjs'
@@ -226,9 +226,21 @@ passport.use(
 // that are not configured explicitly are read from the provider's discovery
 // document (see OidcDiscovery.mjs). This has to happen before the strategy is
 // registered, because the issuer from the document enables OIDC login as well.
-await applyWellKnownConfiguration({ logger })
+//
+// A provider that cannot be reached, or a document that does not carry the
+// endpoints, must not keep the whole application from starting: the problem is
+// logged, OIDC login stays disabled and the rest of Overleaf (including the
+// local login, unless it was switched off) keeps working.
+try {
+  await applyWellKnownConfiguration({ logger })
+} catch (err) {
+  logger.err(
+    { err },
+    'OIDC: could not configure the endpoints from the discovery document, continuing without OIDC login'
+  )
+}
 
-if (process.env.OVERLEAF_OIDC_ISSUER !== undefined) {
+if (oidcIsConfigured(process.env)) {
   passport.use(
     'oidc',
     new OidcStrategy(
@@ -244,10 +256,20 @@ if (process.env.OVERLEAF_OIDC_ISSUER !== undefined) {
         callbackURL: process.env.OVERLEAF_OIDC_CALLBACK_URL,
         callbackURLs: parseCallbackUrls(process.env.OVERLEAF_OIDC_CALLBACK_URLS),
         proxy: Settings.behindProxy,
-        scope: process.env.OVERLEAF_OIDC_SCOPE || 'openid profile email',
+        scope: process.env.OVERLEAF_OIDC_SCOPE || DEFAULT_SCOPE,
       },
       AuthenticationController.verifyOpenIDConnect
     )
+  )
+} else if (
+  process.env.OVERLEAF_OIDC_ISSUER !== undefined ||
+  process.env.OVERLEAF_OIDC_WELL_KNOWN_URL !== undefined
+) {
+  // OIDC was configured, but is not usable - say so instead of leaving the
+  // administrator wondering why the SSO button is missing.
+  logger.err(
+    { missing: missingOidcEndpoints(process.env) },
+    'OIDC: the configuration is incomplete, OIDC login stays disabled'
   )
 }
 passport.serializeUser(AuthenticationController.serializeUser)

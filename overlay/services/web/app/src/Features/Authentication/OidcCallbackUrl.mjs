@@ -40,41 +40,109 @@ function firstHeaderValue(req, name) {
   return value ? String(value).split(',')[0].trim() : null
 }
 
-// Protocol and host the user is browsing; behind a reverse proxy these are in
-// the X-Forwarded-* headers, which are only read when the deployment is
-// configured to trust them (`trustProxy`).
-export function requestOrigin(req, trustProxy) {
-  const protocol =
-    (trustProxy && firstHeaderValue(req, 'x-forwarded-proto')) ||
-    req.protocol ||
-    'http'
-  const host =
-    (trustProxy && firstHeaderValue(req, 'x-forwarded-host')) ||
-    firstHeaderValue(req, 'host')
-  return host ? `${protocol}://${host}` : null
+// Host names and ports are read through the URL parser, so that IPv6 literals
+// ("[::1]:8080") work as well.
+function authorityOf(value) {
+  try {
+    const url = new URL(`http://${value}`)
+    return { hostname: url.hostname.toLowerCase(), port: url.port }
+  } catch (err) {
+    return { hostname: String(value).toLowerCase(), port: '' }
+  }
 }
 
-// Host names are compared without the port, so a pinned entry matches the
-// same host name on every port it is reachable at.
 export function hostnameOf(value) {
+  const url = tryUrl(value)
+  return url ? url.hostname.toLowerCase() : null
+}
+
+function portOf(value) {
+  const url = tryUrl(value)
+  if (url) {
+    return url.port
+  }
+  const authority = authorityOf(value)
+  return authority.port
+}
+
+function tryUrl(value) {
   try {
-    return new URL(value).hostname.toLowerCase()
+    return new URL(value)
   } catch (err) {
     return null
   }
 }
 
-function matchByHostname(req, entries, trustProxy) {
-  const origin = requestOrigin(req, trustProxy)
-  const hostname = origin && hostnameOf(origin)
-  if (!hostname) {
+function defaultPortFor(protocol) {
+  return protocol === 'https' ? '443' : '80'
+}
+
+// Protocol and host the user is browsing; behind a reverse proxy these are in
+// the X-Forwarded-* headers, which are only read when the deployment is
+// configured to trust them (`trustProxy`).
+//
+// The port matters when the instance is reached on a non-standard port (an
+// internal address such as http://192.168.1.10:8080): it is taken from the host
+// that carries one - the plain `Host` header often still has it while
+// `X-Forwarded-Host` does not, because nginx's `$host` drops the port - or from
+// `X-Forwarded-Port`.
+export function requestOrigin(req, trustProxy) {
+  const forwardedProto = trustProxy
+    ? firstHeaderValue(req, 'x-forwarded-proto')
+    : null
+  const protocol = forwardedProto || req.protocol || 'http'
+
+  const forwardedHost = trustProxy
+    ? firstHeaderValue(req, 'x-forwarded-host')
+    : null
+  const hostHeader = firstHeaderValue(req, 'host')
+  const forwardedPort = trustProxy
+    ? firstHeaderValue(req, 'x-forwarded-port')
+    : null
+
+  let host = forwardedHost || hostHeader
+  if (!host) {
     return null
   }
-  return (
-    entries.find(
-      entry => hasProtocol(entry) && hostnameOf(entry) === hostname
-    ) || null
-  )
+
+  if (!portOf(host)) {
+    const alternative = [hostHeader, forwardedHost].find(
+      candidate =>
+        candidate &&
+        candidate !== host &&
+        portOf(candidate) &&
+        hostnameOf(candidate) === hostnameOf(host)
+    )
+    if (alternative) {
+      host = `${host}:${portOf(alternative)}`
+    } else if (forwardedPort && forwardedPort !== defaultPortFor(protocol)) {
+      host = `${host}:${forwardedPort}`
+    }
+  }
+
+  return `${protocol}://${host}`
+}
+
+// Host names are compared case-insensitively. The port only decides when both
+// sides name one: a pinned entry without a port matches every port, and when
+// the proxy did not pass the port on, an entry that names it still matches.
+export function matchesHost(entry, origin) {
+  const entryHostname = hostnameOf(entry)
+  const originHostname = hostnameOf(origin)
+  if (!entryHostname || entryHostname !== originHostname) {
+    return false
+  }
+  const entryPort = portOf(entry)
+  const originPort = portOf(origin)
+  return !entryPort || !originPort || entryPort === originPort
+}
+
+function matchByHostname(req, entries, trustProxy) {
+  const origin = requestOrigin(req, trustProxy)
+  if (!origin) {
+    return null
+  }
+  return entries.find(entry => hasProtocol(entry) && matchesHost(entry, origin)) || null
 }
 
 export function resolveCallbackURL(req, options = {}) {
