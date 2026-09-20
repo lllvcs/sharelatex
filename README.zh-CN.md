@@ -219,8 +219,11 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
   `simsun.ttc`、`simhei.ttf`、`simkai.ttf`、`simfang.ttf`、`simli.ttf`），并且
   该映射被全局启用：使用这些字体族的文档在 **pdfLaTeX** + `CJK`/`CJKutf8`
   下无需自己 `\input zhwinfonts` 即可编译。
-- **构建期校验。** 构建结束前会用 `kpsewhich`、`fc-match` 检查各类字体的代表项，
-  缺少字体时直接让构建失败，而不是产出一个「文档报 font not found」的镜像。
+- **构建期校验。** 用 `kpsewhich` 检查两类字体的度量与字形文件是否都在，并用
+  pdfTeX 编译一小段文档，确认 `zhmetrics` 映射确实生效（映射缺失正是真实文档里
+  「Font uniyou20 not found」的根源）。fontconfig 的字体族名会一并打印出来，
+  按族名选择字体的 XeLaTeX 示例 `tests/fonts-by-name` 则由 CI 在构建出的镜像里
+  实际编译。
 
 说明：
 

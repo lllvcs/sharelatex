@@ -12,7 +12,7 @@ after the shared one).
 | Example | What it verifies |
 | --- | --- |
 | `chinese-fonts` | the vendored Chinese fonts are registered with fontconfig (`SimSun`, `SimHei`, `FangSong`) |
-| `fonts-by-name` | fonts selected by family name, which needs the fontconfig registration of `texmf-dist/fonts` (`FandolSong`, ...) |
+| `fonts-by-name` | fonts selected by family name, compiled with **XeLaTeX** because that is the engine that goes through fontconfig (`FandolSong`, `WenQuanYi Zen Hei`, ...) |
 | `fonts-zhmetrics` | the `zhmetrics` metrics have their glyph files and map (`uniyou20`, `unisong5b`, ...), compiled with pdfLaTeX |
 | `gregorio`, `lilypond`, `minted`, `svg_(inkscape)`, `shell-escape_subfolder_(tikzext)` | the tools installed on top of the base image work |
 

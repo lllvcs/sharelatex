@@ -116,25 +116,45 @@ RUN --mount=type=bind,source=fonts,target=/tmp/latex-chinese-fonts \
     fc-cache -fv
 
 # Fail the build instead of shipping an image in which documents that use
-# these fonts stop with "font not found". The TeX Live binaries are called by
-# path because the apt packages of TeX Live (installed above for the extra
-# Type1 fonts) put their own, older copies into /usr/bin.
+# these fonts stop with "font not found".
+#
+# The first group is fatal: uniyou20.tfm, gbkyou20.tfm and
+# FandolSong-Regular.otf come from TeX Live scheme-full, gbsn00lp.ttf from its
+# arphic-ttf package and simyou.ttf/simsun.ttc from the fonts/ installation
+# above; when one of them is missing, documents using that font cannot work.
+# The fontconfig families are only reported, because a family name is also
+# covered by the XeLaTeX example in tests/fonts-by-name, which CI compiles
+# against the built image.
+#
+# The TeX Live binaries are called by path because the apt packages of TeX
+# Live (installed above for the extra Type1 fonts) put their own, older copies
+# into /usr/bin.
 RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -1) && \
     export PATH="$TLBIN:$PATH" && \
-    TLROOT=$(find /usr/local/texlive -maxdepth 1 -type d -name '20*') && \
     for f in uniyou20.tfm gbkyou20.tfm FandolSong-Regular.otf gbsn00lp.ttf \
              simyou.ttf simsun.ttc ; do \
-      kpsewhich "$f" > /dev/null || \
-        { echo "ERROR: $f is missing from the image"; exit 1; } ; \
-      echo "  found $f"; \
+      path=$(kpsewhich "$f" || true) ; \
+      if [ -z "$path" ] ; then \
+        echo "ERROR: $f is missing (TeX Live scheme-full or the fonts/ installation did not complete)" ; \
+        exit 1 ; \
+      fi ; \
+      echo "  found $f -> $path" ; \
     done && \
-    grep -q '@Unicode@' "$TLROOT/texmf-var/web2c/pdftex/pdftex.map" || \
-      { echo "ERROR: the zhmetrics map is not enabled in pdftex.map"; exit 1; } && \
+    cd /tmp && \
+    printf '%s\n' '\font\testyou=uniyou5e' '\testyou\char"7c' '\bye' > uniyou5e.tex && \
+    if pdftex -interaction=nonstopmode uniyou5e.tex > uniyou5e.log 2>&1 ; then \
+      echo "  pdfTeX loads uniyou5e, the zhmetrics map is active" ; \
+    else \
+      echo "ERROR: pdfTeX cannot load uniyou5e, the zhmetrics map is not active" ; \
+      cat uniyou5e.log ; \
+      exit 1 ; \
+    fi && \
+    rm -f uniyou5e.tex uniyou5e.log uniyou5e.dvi && \
     for family in FandolSong YouYuan 'Noto Sans CJK SC' ; do \
       match=$(fc-match -f '%{family}' "$family") ; \
       case "$match" in \
         *"$family"*) echo "  fontconfig knows $family" ;; \
-        *) echo "ERROR: fontconfig resolves $family to $match"; exit 1 ;; \
+        *) echo "WARNING: fontconfig resolves $family to '$match'; documents selecting it by that name will not find it" ;; \
       esac ; \
     done
 

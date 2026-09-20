@@ -1,0 +1,6 @@
+# This example selects fonts by family name, which XeLaTeX resolves through
+# fontconfig - exactly what the fontconfig registration in the Dockerfile
+# provides.  The shared ../latexmkrc would compile it with LuaLaTeX, which can
+# also find the TeX Live fonts through its own name database.
+$pdf_mode = 5;
+$xelatex = 'xelatex -synctex=1 -interaction=nonstopmode -file-line-error -shell-escape -recorder';

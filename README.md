@@ -245,9 +245,12 @@ them are handled by the `Dockerfile`:
   map is enabled system-wide, so documents using these families work with
   **pdfLaTeX** and the `CJK`/`CJKutf8` package without having to
   `\input zhwinfonts` themselves.
-- **The build verifies the result** (`kpsewhich` and `fc-match` checks for
-  representative fonts of each group) and fails instead of shipping an image in
-  which documents stop with "font not found".
+- **The build verifies the result.** It checks with `kpsewhich` that the metric
+  and glyph files of both groups are installed and compiles a small document
+  with pdfTeX to prove that the `zhmetrics` map is active (a missing map is what
+  turns into "Font uniyou20 not found" in a real document). The fontconfig
+  family names are reported as well, and the XeLaTeX example
+  `tests/fonts-by-name` is compiled by CI against the built image.
 
 Notes:
 
