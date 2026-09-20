@@ -32,6 +32,15 @@ const ENDPOINT_VARIABLES = {
   userinfo_endpoint: 'OVERLEAF_OIDC_USERINFO_URL',
 }
 
+// Everything passport-oauth2 needs besides the issuer: a missing client id or
+// secret makes the strategy constructor throw, which would keep the whole web
+// service from starting, so they are part of the completeness check.
+const REQUIRED_VARIABLES = [
+  ...Object.values(ENDPOINT_VARIABLES),
+  'OVERLEAF_OIDC_CLIENT_ID',
+  'OVERLEAF_OIDC_CLIENT_SECRET',
+]
+
 export function wellKnownDocumentUrl(value) {
   const url = String(value).trim()
   if (url.includes('/.well-known/')) {
@@ -59,15 +68,16 @@ export function isCompletelyConfigured(env) {
   )
 }
 
-// The endpoints passport-oauth2 needs to register the strategy.
+// The settings passport-oauth2 needs to register the strategy.
 export function missingOidcEndpoints(env) {
-  return Object.values(ENDPOINT_VARIABLES).filter(variable => !env[variable])
+  return REQUIRED_VARIABLES.filter(variable => !env[variable])
 }
 
-// Whether OIDC login can be registered: an issuer enables it, and the three
-// endpoints have to be known. Called after the discovery document was read, so
-// an incomplete configuration (or a document that could not be read) leaves
-// the application running without OIDC instead of failing to start.
+// Whether OIDC login can be registered: an issuer enables it, and the
+// endpoints plus the client credentials have to be known. Called after the
+// discovery document was read, so an incomplete configuration (or a document
+// that could not be read) leaves the application running without OIDC instead
+// of failing to start.
 export function oidcIsConfigured(env) {
   return (
     Boolean(env.OVERLEAF_OIDC_ISSUER) && missingOidcEndpoints(env).length === 0
@@ -147,6 +157,28 @@ export function applyDocument(document, env = process.env) {
   return applied
 }
 
+// fetch() reports every network problem as "fetch failed" and hides the real
+// reason in `cause` (and, when several addresses were tried, in an
+// AggregateError's `errors`). Walk the chain so that the log says what actually
+// went wrong - ENOTFOUND, ECONNREFUSED, a certificate error, ...
+export function describeError(err) {
+  const seen = new Set()
+  const parts = []
+  const walk = (nested, depth) => {
+    if (!nested || depth > 5 || seen.has(nested)) {
+      return
+    }
+    seen.add(nested)
+    parts.push(nested.code ? `${nested.code} (${nested.message})` : nested.message)
+    for (const inner of Array.isArray(nested.errors) ? nested.errors : []) {
+      walk(inner, depth + 1)
+    }
+    walk(nested.cause, depth + 1)
+  }
+  walk(err, 0)
+  return parts.filter(Boolean).join(' | ') || String(err)
+}
+
 async function fetchDocument(url, fetchImpl, timeoutMs) {
   let response
   try {
@@ -155,7 +187,7 @@ async function fetchDocument(url, fetchImpl, timeoutMs) {
       signal: AbortSignal.timeout(timeoutMs),
     })
   } catch (err) {
-    throw new Error(`the request failed: ${err.message}`)
+    throw new Error(`the request failed: ${describeError(err)}`)
   }
   if (!response.ok) {
     const err = new Error(`the provider answered with HTTP ${response.status}`)
@@ -192,9 +224,11 @@ export async function applyWellKnownConfiguration(options = {}) {
   const value = String(wellKnownUrl).trim()
 
   if (isCompletelyConfigured(env)) {
-    info(
+    warn(
       { wellKnownUrl: value },
-      'OIDC: endpoints are configured, not reading the discovery document'
+      'OIDC: the issuer and all endpoints are configured, so the discovery ' +
+        'document is not read - remove the explicit OVERLEAF_OIDC_*_URL ' +
+        'variables if the document should provide them'
     )
     return null
   }

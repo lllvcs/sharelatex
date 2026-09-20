@@ -118,8 +118,9 @@ docker rm tmp
   when the issuer and the three endpoint variables are set by hand. A document
   that cannot be read, or that does not carry the endpoints, is **logged** and
   leaves OIDC login disabled (`oidcIsConfigured()` gates the strategy
-  registration), so a misconfigured provider cannot keep the whole application
-  from starting. The variable also accepts the document itself (a value
+  registration, and it also requires the client id and secret, without which
+  the passport-oauth2 constructor would throw), so a misconfigured provider
+  cannot keep the whole application from starting. The variable also accepts the document itself (a value
   starting with `{`), and the default scope is reduced to what the document
   lists in `scopes_supported` (an explicit `OVERLEAF_OIDC_SCOPE` is left
   alone), because providers such as Synology's SSO server reject unsupported

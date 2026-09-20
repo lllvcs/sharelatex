@@ -92,8 +92,10 @@ Azure AD 等）登录。**在配置提供方之前 OIDC 登录处于关闭状态
 
 ### 配置
 
-使用 Overleaf Toolkit 时，把以下变量加入 `config/overleaf.rc`，或写入
-`config/docker-compose.override.yml`：
+使用 Overleaf Toolkit 时，请把变量加入 **`config/variables.env`**——toolkit 正是
+以 env file 的形式把这个文件传给容器。注意 `config/overleaf.rc` 只被 toolkit 自己
+的脚本读取，写在那里的变量**不会**进入容器。若使用原生 compose，则写进
+`config/docker-compose.override.yml` 的 `environment:`/`env_file:`：
 
 ```yaml
 services:
@@ -154,7 +156,9 @@ OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm/.well-known
 去请求该文档**，这样「全部写死」的配置不依赖提供方在容器启动时可达。否则会以
 递增间隔重试 5 次（合计约 30 秒）。若仍然读不到文档、或文档里缺少所需端点，原因
 会写入容器日志，**OIDC 登录保持关闭，Overleaf 的其它功能照常工作**——不会因为
-提供方地址写错就让整个站点不可用。
+提供方地址写错就让整个站点不可用。另外仍需 `OVERLEAF_OIDC_CLIENT_ID` 与
+`OVERLEAF_OIDC_CLIENT_SECRET`（discovery 文档里没有这两项）；缺少任一项时，
+OIDC 登录会被关闭并记录日志，而不是让容器启动失败。
 
 ### 回调地址（多域名与反向代理）
 
@@ -200,7 +204,8 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   值）。
 - 客户端认证方式：令牌请求把 `client_id` 与 `client_secret` 放在请求体中
   （`client_secret_post`）。
-- 需要开放 `openid profile email` scope。Userinfo 响应必须包含 `sub` 与
+- 需要开放 `openid` 与 `email` scope（默认还会请求 `profile`，若 discovery
+  文档显示提供方不支持则会自动略过）。Userinfo 响应必须包含 `sub` 与
   `email` 声明；如果存在 `given_name`、`family_name`、`name`、
   `preferred_username` 也会被使用。
 

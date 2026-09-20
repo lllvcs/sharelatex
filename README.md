@@ -98,8 +98,11 @@ to Overleaf `6.3.0`, implemented as file replacements inside the image (see
 
 ### Configuration
 
-With the Overleaf Toolkit, add the variables to `config/overleaf.rc` (they are
-passed to the container) or to `config/docker-compose.override.yml`:
+With the Overleaf Toolkit, add the variables to **`config/variables.env`** -
+that file is what the toolkit passes to the container (as an env file). Note
+that `config/overleaf.rc` is only read by the toolkit's own scripts, variables
+put there do **not** reach the container. For a plain compose setup, use the
+service's `environment:`/`env_file:` in `config/docker-compose.override.yml`:
 
 ```yaml
 services:
@@ -167,7 +170,10 @@ starts. Otherwise the fetch is retried five times with an increasing delay
 (about 30 seconds in total). If the document still cannot be read, or if it
 does not carry the endpoints, the reason is written to the container log and
 **OIDC login stays disabled - the rest of Overleaf keeps working**, so a wrong
-provider URL does not take the whole instance down.
+provider URL does not take the whole instance down. `OVERLEAF_OIDC_CLIENT_ID`
+and `OVERLEAF_OIDC_CLIENT_SECRET` are needed as well (a discovery document does
+not contain them); when one of them is missing, OIDC login is disabled with a
+log message instead of stopping the container.
 
 ### Redirect URI (several domains and reverse proxies)
 
@@ -218,9 +224,11 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   one per host name you serve, or the `OVERLEAF_OIDC_CALLBACK_URLS` values.
 - Client authentication: the token request sends `client_id` and
   `client_secret` in the request body (`client_secret_post`).
-- The `openid profile email` scopes must be available. The userinfo response
-  must contain the `sub` and `email` claims; `given_name`, `family_name`,
-  `name` and `preferred_username` are used when present.
+- The `openid` and `email` scopes are required. `profile` is requested as well
+  by default and left out automatically when the discovery document does not
+  list it. The userinfo response must contain the `sub` and `email` claims;
+  `given_name`, `family_name`, `name` and `preferred_username` (or `username`)
+  are used when present.
 
 ### Behaviour
 

@@ -30,6 +30,7 @@ if (!modulePath) {
 const {
   applyDocument,
   applyWellKnownConfiguration,
+  describeError,
   missingEndpoints,
   missingOidcEndpoints,
   oidcIsConfigured,
@@ -178,7 +179,7 @@ test('a document without an issuer is rejected', () => {
   assert.equal(env.OVERLEAF_OIDC_TOKEN_URL, DOCUMENT.token_endpoint)
 })
 
-test('OIDC is only usable with an issuer and all three endpoints', () => {
+test('OIDC is only usable with an issuer, the endpoints and the client credentials', () => {
   assert.equal(oidcIsConfigured({}), false)
   assert.equal(
     oidcIsConfigured({ OVERLEAF_OIDC_ISSUER: 'https://idp.example.com' }),
@@ -190,17 +191,23 @@ test('OIDC is only usable with an issuer and all three endpoints', () => {
       'OVERLEAF_OIDC_AUTHORIZATION_URL',
       'OVERLEAF_OIDC_TOKEN_URL',
       'OVERLEAF_OIDC_USERINFO_URL',
+      'OVERLEAF_OIDC_CLIENT_ID',
+      'OVERLEAF_OIDC_CLIENT_SECRET',
     ]
   )
-  assert.equal(
-    oidcIsConfigured({
-      OVERLEAF_OIDC_ISSUER: 'https://idp.example.com',
-      OVERLEAF_OIDC_AUTHORIZATION_URL: 'https://idp.example.com/auth',
-      OVERLEAF_OIDC_TOKEN_URL: 'https://idp.example.com/token',
-      OVERLEAF_OIDC_USERINFO_URL: 'https://idp.example.com/me',
-    }),
-    true
-  )
+  const complete = {
+    OVERLEAF_OIDC_ISSUER: 'https://idp.example.com',
+    OVERLEAF_OIDC_AUTHORIZATION_URL: 'https://idp.example.com/auth',
+    OVERLEAF_OIDC_TOKEN_URL: 'https://idp.example.com/token',
+    OVERLEAF_OIDC_USERINFO_URL: 'https://idp.example.com/me',
+    OVERLEAF_OIDC_CLIENT_ID: 'overleaf',
+    OVERLEAF_OIDC_CLIENT_SECRET: 'secret',
+  }
+  assert.equal(oidcIsConfigured(complete), true)
+  // a missing client secret would make the strategy constructor throw
+  delete complete.OVERLEAF_OIDC_CLIENT_SECRET
+  assert.equal(oidcIsConfigured(complete), false)
+  assert.deepEqual(missingOidcEndpoints(complete), ['OVERLEAF_OIDC_CLIENT_SECRET'])
 })
 
 test('a document that cannot be used leaves the environment untouched', () => {
@@ -276,6 +283,48 @@ test('a value that is neither a URL nor JSON is reported clearly', async () => {
     }),
     /starts like JSON but cannot be parsed/
   )
+})
+
+test('a failed request reports the underlying reason, not just "fetch failed"', async () => {
+  const dnsFailure = Object.assign(new Error('fetch failed'), {
+    cause: Object.assign(new Error('getaddrinfo ENOTFOUND idp.example.com'), {
+      code: 'ENOTFOUND',
+    }),
+  })
+  const { fetchImpl } = stubFetch([dnsFailure])
+
+  await assert.rejects(
+    applyWellKnownConfiguration({
+      env: { OVERLEAF_OIDC_WELL_KNOWN_URL: 'https://idp.example.com/realms/x' },
+      fetchImpl,
+      logger,
+      attempts: 1,
+    }),
+    /ENOTFOUND idp\.example\.com/
+  )
+
+  // when several addresses were tried, fetch reports an AggregateError
+  assert.match(
+    describeError(
+      Object.assign(new Error('fetch failed'), {
+        cause: new AggregateError(
+          [
+            Object.assign(new Error('connect ECONNREFUSED ::1:443'), {
+              code: 'ECONNREFUSED',
+            }),
+            Object.assign(new Error('connect ENETUNREACH 2a01:cb00::1:443'), {
+              code: 'ENETUNREACH',
+            }),
+          ],
+          'all addresses failed'
+        ),
+      })
+    ),
+    /ENETUNREACH/
+  )
+
+  // a plain error without a cause still says something useful
+  assert.equal(describeError(new Error('boom')), 'boom')
 })
 
 test('nothing is fetched without OVERLEAF_OIDC_WELL_KNOWN_URL', async () => {
