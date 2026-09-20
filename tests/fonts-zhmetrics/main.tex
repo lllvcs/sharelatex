@@ -1,0 +1,28 @@
+\documentclass{article}
+
+% The TeX Live "zhmetrics" metric files (uniyou20 for 幼圆, unisong5b for 宋体,
+% gbkyou20, ...) contain metrics only. The Dockerfile installs the Chinese
+% fonts from ../fonts under the Windows names that the zhmetrics map expects
+% (simyou.ttf, simsun.ttc, simhei.ttf, simkai.ttf, simfang.ttf, simli.ttf) and
+% enables that map through updmap, so the CJK package finds the glyphs here
+% without the document having to \input zhwinfonts.
+%
+% This test therefore only needs the CJK package: it fails with "Font
+% uniyou5e not loadable" when the glyph files or the map are missing.
+\usepackage{CJKutf8}
+
+\begin{document}
+
+\begin{CJK}{UTF8}{you}幼圆体测试\end{CJK}
+
+\begin{CJK}{UTF8}{song}宋体测试\end{CJK}
+
+\begin{CJK}{UTF8}{hei}黑体测试\end{CJK}
+
+\begin{CJK}{UTF8}{kai}楷体测试\end{CJK}
+
+\begin{CJK}{UTF8}{fs}仿宋测试\end{CJK}
+
+\begin{CJK}{UTF8}{li}隶书测试\end{CJK}
+
+\end{document}

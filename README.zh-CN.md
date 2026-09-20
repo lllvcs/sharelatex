@@ -17,6 +17,9 @@
 - 完整更新的 TeX Live 安装，包含所有可用宏包
 - 额外的 TeX Live 与系统字体，包含**已随仓库内置**的中文字体集合
   （见 [`fonts/`](fonts/README.md)，构建镜像时无需联网下载字体）
+- TeX Live 的全部字体都注册到了 fontconfig，因此可以直接用**字体族名**调用；
+  中文字体也按 TeX Live `zhmetrics` 度量（`uniyou20`、`unisong5b`、
+  `gbkyou20` 等）所要求的文件名安装，详见[字体](#字体)
 - 支持 `minted`
 - 通过 inkscape 支持 `svg` 图片
 - 支持 lilypond
@@ -108,10 +111,12 @@ services:
 | 变量 | 说明 |
 | --- | --- |
 | `OVERLEAF_OIDC_ISSUER` | 提供方的 Issuer 地址，未设置时 OIDC 登录保持关闭。 |
+| `OVERLEAF_OIDC_WELL_KNOWN_URL` | 提供方的 discovery 文档地址，或直接填 Issuer 地址——下方各端点将从该文档读取，见 [Discovery](#discovery一键配置)。 |
 | `OVERLEAF_OIDC_AUTHORIZATION_URL` | 发起登录流程的授权端点。 |
 | `OVERLEAF_OIDC_TOKEN_URL` | 用于交换授权码的令牌端点。 |
 | `OVERLEAF_OIDC_USERINFO_URL` | Userinfo 端点，其声明用于识别用户。 |
-| `OVERLEAF_OIDC_CALLBACK_URL` | 在提供方注册的回调地址，即站点地址加 `/login/oidc/callback`。 |
+| `OVERLEAF_OIDC_CALLBACK_URL` | 在提供方注册的回调地址。**可选**：不设置时按用户访问的网址自动生成，见[回调地址](#回调地址多域名与反向代理)。 |
+| `OVERLEAF_OIDC_CALLBACK_URLS` | 多个回调地址（以逗号或空白分隔），用于同一站点有多个域名的情况。优先级高于 `OVERLEAF_OIDC_CALLBACK_URL`。 |
 | `OVERLEAF_OIDC_CLIENT_ID` | 在提供方注册的 Client ID。 |
 | `OVERLEAF_OIDC_CLIENT_SECRET` | 在提供方注册的 Client Secret。 |
 | `OVERLEAF_OIDC_SCOPE` | 请求的 scope（默认 `openid profile email`）。 |
@@ -122,9 +127,59 @@ services:
 | `OVERLEAF_OIDC_LOGIN_IN_NAVBAR` | 设为 `true` 时在导航栏也显示 SSO 按钮（默认 `false`；禁用本地登录时始终显示）。 |
 | `OVERLEAF_ENABLE_REGISTRATION` | 设为 `false` 隐藏注册页。未设置时，只要启用 OIDC 就隐藏注册页。 |
 
+### Discovery（一键配置）
+
+除了逐个填写端点，也可以直接使用提供方的 discovery 文档。既可以填文档地址，也
+可以只填 Issuer 地址（会自动补上 `/.well-known/openid-configuration`）：
+
+```yaml
+OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm
+# 或者
+OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm/.well-known/openid-configuration
+```
+
+文档中的 `issuer`、`authorization_endpoint`、`token_endpoint`、
+`userinfo_endpoint` 会被采用——**但仅在对应变量未设置时**，因此其它所有
+`OVERLEAF_OIDC_*` 变量都会覆盖文档中的值。`OVERLEAF_OIDC_ISSUER` 同样可以不填：
+文档里的 issuer 也会启用 OIDC 登录。
+
+当 `OVERLEAF_OIDC_ISSUER` 以及 `OVERLEAF_OIDC_AUTHORIZATION_URL`、
+`OVERLEAF_OIDC_TOKEN_URL`、`OVERLEAF_OIDC_USERINFO_URL` 都已设置时，**完全不会
+去请求该文档**，这样「全部写死」的配置不依赖提供方在容器启动时可达。否则会以
+递增间隔重试 5 次（合计约 30 秒），仍失败则容器拒绝启动（而不是带着一个无法工作
+的登录入口启动），原因会写入容器日志。
+
+### 回调地址（多域名与反向代理）
+
+**默认无需任何配置**：回调地址由发起登录的那次请求推导而来，即
+`<协议>://<用户正在访问的域名>/login/oidc/callback`。因此同一个站点即使有多个
+域名也能直接工作——只需在提供方为每个域名注册一个回调地址，而回调到达时也只会
+与「发起登录时所用的域名」匹配。
+
+协议与域名取自 `X-Forwarded-Proto`、`X-Forwarded-Host` 请求头（在信任它们时），
+这也是 Overleaf 的默认行为（`behindProxy`），因此反向代理应当设置这两个头。如果
+没有这两个头，地址会退化为 `Host` 请求头 + `http`，若提供方要求 `https` 就会
+被拒绝。
+
+如果需要固定回调地址，有两种方式：
+
+```yaml
+# 只用一个地址（也可以只写路径），按配置原样使用
+OVERLEAF_OIDC_CALLBACK_URL: https://latex.example.com/login/oidc/callback
+
+# 每个域名一个地址
+OVERLEAF_OIDC_CALLBACK_URLS: https://latex.example.com/login/oidc/callback, https://tex.example.org/login/oidc/callback
+```
+
+使用 `OVERLEAF_OIDC_CALLBACK_URLS` 时，会选用「域名与当前请求匹配」的那一条
+（忽略端口）；只写路径（例如 `/login/oidc/callback`）的条目对任何域名都生效；
+没有匹配到任何条目的域名，则回退到按请求自动推导的地址（也就是未配置时的行为）。
+
 ### 提供方配置
 
 - 回调地址（Redirect URI）：`https://<你的 Overleaf 域名>/login/oidc/callback`
+  ——你使用几个域名，就注册几个（或直接使用 `OVERLEAF_OIDC_CALLBACK_URLS` 中的
+  值）。
 - 客户端认证方式：令牌请求把 `client_id` 与 `client_secret` 放在请求体中
   （`client_secret_post`）。
 - 需要开放 `openid profile email` scope。Userinfo 响应必须包含 `sub` 与
@@ -143,6 +198,39 @@ services:
   接管已有账号。
 - 登录失败（例如用户取消授权）会跳回 `/login`，具体原因写入容器日志
   （`OIDC login failed`）。
+
+## 字体
+
+镜像包含 TeX Live 安装（`scheme-full`，即 CTAN 字体归档中所有有 TeX Live 宏包
+的字体）、TeX Live 本身不含的系统字体（Noto CJK、文泉驿、文鼎 Uming/Ukai、
+Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
+（见 [`fonts/`](fonts/README.md)）中内置的字体集合。
+
+「装上了」和「能用」之间的差距由 `Dockerfile` 中的三件事弥合：
+
+- **把 TeX Live 字体注册到 fontconfig。** 否则这些字体只能按**文件名**调用
+  （`\setCJKmainfont{FandolSong-Regular.otf}`）：按**字体族名**调用
+  （`\setCJKmainfont{FandolSong}`）要经过 fontconfig。镜像为
+  `texmf-dist/fonts/{opentype,truetype}` 添加了 fontconfig 配置，覆盖整个
+  TeX Live 字体集合——XeLaTeX/LuaLaTeX 文档以及 inkscape 都能按名字使用。
+- **为 `zhmetrics` 度量补上字形文件。** TeX Live 的 `zhmetrics` 宏包只含度量
+  （`uniyou20`、`unisong5b`、`gbkyou20` 等），字形来自生成这些度量的 Windows
+  字体。内置字体因此会以该映射所要求的文件名再安装一份（`simyou.ttf`、
+  `simsun.ttc`、`simhei.ttf`、`simkai.ttf`、`simfang.ttf`、`simli.ttf`），并且
+  该映射被全局启用：使用这些字体族的文档在 **pdfLaTeX** + `CJK`/`CJKutf8`
+  下无需自己 `\input zhwinfonts` 即可编译。
+- **构建期校验。** 构建结束前会用 `kpsewhich`、`fc-match` 检查各类字体的代表项，
+  缺少字体时直接让构建失败，而不是产出一个「文档报 font not found」的镜像。
+
+说明：
+
+- CTeX 的纯 Unicode 字体集（`fontset=fandol`、`fontset=founder`、
+  `fontset=mac` 等）必须使用 **XeLaTeX 或 LuaLaTeX**；在 pdfLaTeX 下 CTeX 会
+  按设计报「fontset 不可用」。`fandol` 属于 TeX Live，用 XeLaTeX/LuaLaTeX 即可。
+- `tests/fonts-zhmetrics` 与 `tests/fonts-by-name` 是这两种用法的示例，CI 会在
+  镜像内实际编译它们。
+- 内置的微软/苹果/Adobe 字体不可再分发，许可证情况见
+  [`fonts/README.md`](fonts/README.md)。
 
 ## 环境变量
 

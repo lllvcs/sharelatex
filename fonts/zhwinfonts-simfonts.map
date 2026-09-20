@@ -1,0 +1,36 @@
+% Map entries that connect the TeX Live "zhmetrics" metric files (uniyou20,
+% unisong20, gbkyou20, ...) with the glyph files this image installs under the
+% Windows file names those metrics expect (simyou.ttf, simsun.ttc, ...).
+%
+% zhmetrics ships metrics only, and its map lines live in the TeX file
+% zhwinfonts.tex, which a document has to \input itself.  The lines below are
+% the pdfTeX lines of that file - with the leading `=', which is a \pdfmapline
+% modifier and not map file syntax, removed - installed into the system map by
+% the Dockerfile, so that documents using these fonts work without having to
+% know about zhwinfonts.tex.  See fonts/README.md.
+gbk@UGBK@ <simsun.ttc
+gbksong@UGBK@ <simsun.ttc
+gbkkai@UGBK@ <simkai.ttf
+gbkhei@UGBK@ <simhei.ttf
+gbkfs@UGBK@ <simfang.ttf
+gbkli@UGBK@ <simli.ttf
+gbkyou@UGBK@ <simyou.ttf
+cyberb@Unicode@ <simsun.ttc
+unisong@Unicode@ <simsun.ttc
+unikai@Unicode@ <simkai.ttf
+unihei@Unicode@ <simhei.ttf
+unifs@Unicode@ <simfang.ttf
+unili@Unicode@ <simli.ttf
+uniyou@Unicode@ <simyou.ttf
+gbksongsl@UGBK@ <simsun.ttc
+gbkkaisl@UGBK@ <simkai.ttf
+gbkheisl@UGBK@ <simhei.ttf
+gbkfssl@UGBK@ <simfang.ttf
+gbklisl@UGBK@ <simli.ttf
+gbkyousl@UGBK@ <simyou.ttf
+unisongsl@Unicode@ <simsun.ttc
+unikaisl@Unicode@ <simkai.ttf
+uniheisl@Unicode@ <simhei.ttf
+unifssl@Unicode@ <simfang.ttf
+unilisl@Unicode@ <simli.ttf
+uniyousl@Unicode@ <simyou.ttf

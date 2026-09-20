@@ -1,0 +1,26 @@
+\documentclass[UTF8]{ctexart}
+
+% Fonts that are selected by family name, which fontconfig resolves:
+%   - FandolSong comes from TeX Live and is only found because the Dockerfile
+%     registers texmf-dist/fonts with fontconfig,
+%   - Noto Sans CJK SC comes from the apt package fonts-noto-cjk,
+%   - the WenQuanYi and Arphic fonts are the vendored ones from ../fonts and
+%     the apt packages fonts-arphic-*.
+\setCJKmainfont{FandolSong}
+\setCJKsansfont{WenQuanYi Zen Hei}
+\setCJKmonofont{AR PL SungtiL GB}
+\newCJKfontfamily\notosans{Noto Sans CJK SC}
+
+\begin{document}
+
+\section{按字体族名调用字体}
+
+正文（FandolSong，TeX Live 的 Fandol 字体）：中文测试。Fandol is a free font.
+
+\textsf{无衬线（WenQuanYi Zen Hei）}
+
+\texttt{等宽（AR PL SungtiL GB）}
+
+{\notosans 思源黑体 Noto Sans CJK SC}
+
+\end{document}

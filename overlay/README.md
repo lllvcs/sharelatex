@@ -69,11 +69,13 @@ docker rm tmp
 
 | File | Change |
 | --- | --- |
-| `app/src/Features/Authentication/OidcStrategy.mjs` | **new file**: minimal OIDC strategy on top of `passport-oauth2`; fetches the profile from the userinfo endpoint |
+| `app/src/Features/Authentication/OidcStrategy.mjs` | **new file**: minimal OIDC strategy on top of `passport-oauth2`; fetches the profile from the userinfo endpoint, resolves the redirect URI per request |
+| `app/src/Features/Authentication/OidcCallbackUrl.mjs` | **new file**: picks the redirect URI for a request (automatic/derived, one URL, or a list of URLs); no imports besides `node:url`, so `tests/oidc-callback-url.test.mjs` can test it on its own |
+| `app/src/Features/Authentication/OidcDiscovery.mjs` | **new file**: reads the provider's discovery document (`OVERLEAF_OIDC_WELL_KNOWN_URL`) and fills the unset `OVERLEAF_OIDC_*` endpoint variables; only imports `node:timers/promises`, tested by `tests/oidc-well-known.test.mjs` |
 | `app/src/Features/Authentication/AuthenticationController.mjs` | adds `oidcLogin`, `oidcLoginCallback`, `verifyOpenIDConnect`, `extractOidcIdFromProfile`, `ensureOidcLoginEnabled`; extracts `createPassportCallback`; disables local login when `OVERLEAF_ENABLE_LOCAL_LOGIN=false` |
-| `app/src/infrastructure/Server.mjs` | registers the `oidc` passport strategy when `OVERLEAF_OIDC_ISSUER` is set |
+| `app/src/infrastructure/Server.mjs` | registers the `oidc` passport strategy when `OVERLEAF_OIDC_ISSUER` is set, passing `OVERLEAF_OIDC_CALLBACK_URL(S)` and Overleaf's `behindProxy` setting |
 | `app/src/infrastructure/ExpressLocals.mjs` | exposes the login/OIDC configuration to the views |
-| `app/src/infrastructure/Features.mjs` | counts OIDC as an external authentication system (hides the registration page unless `OVERLEAF_ENABLE_REGISTRATION` overrides it) |
+| `app/src/infrastructure/Features.mjs` | counts OIDC as an external authentication system (hides the registration page unless `OVERLEAF_ENABLE_REGISTRATION` overrides it); reads the issuer when it is asked instead of at import time, so the discovery document can supply it |
 | `app/src/models/User.mjs` | adds the `oidcIdentifier` field |
 | `app/src/Features/User/UserPrimaryEmailCheckHandler.mjs` | skips the primary email check for OIDC users (the mail address is asserted by the provider) |
 | `app/src/router.mjs` | adds `/login/oidc` and `/login/oidc/callback`; redirects `/register` to `/login` when registration is disabled |
@@ -93,3 +95,24 @@ docker rm tmp
   image; the added code does not access raw request input.
 - The token exchange sends the client credentials in the request body
   (`client_secret_post`). Make sure the OIDC client is configured accordingly.
+- The redirect URI is resolved per request in `OidcCallbackUrl.mjs`:
+  `passport-oauth2` resolves a *relative* callback URL against the URL of the
+  request being authenticated and honours the `X-Forwarded-*` headers when the
+  strategy is constructed with `proxy` (it gets `Settings.behindProxy`, which
+  is `true` in the CE image). That is what makes a deployment reachable under
+  several host names work without configuration; the same value is used for the
+  authorization request and the token exchange because both go through
+  `strategy.authenticate()`. `OVERLEAF_OIDC_CALLBACK_URL` (one URL) and
+  `OVERLEAF_OIDC_CALLBACK_URLS` (a list, matched by host name) pin the value
+  for providers that require an exact match with the registered URI.
+- `OVERLEAF_OIDC_WELL_KNOWN_URL` is resolved while the server starts
+  (`applyWellKnownConfiguration()`, awaited in `Server.mjs` before the passport
+  strategy is registered). The document's values are written into
+  `process.env` as defaults, so all the other code keeps reading plain
+  environment variables and explicit values keep winning. Nothing is fetched
+  when the three endpoint variables are set by hand; a document that cannot be
+  read fails the start (after five retries) instead of leaving behind a login
+  that cannot work. Because the issuer, and with it the "OIDC is enabled" flag,
+  may come from the document, module-level reads of
+  `process.env.OVERLEAF_OIDC_ISSUER` had to become call-time reads (see
+  `Features.mjs`); the other readers already evaluate it per request.

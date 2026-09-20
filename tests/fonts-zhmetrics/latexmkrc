@@ -1,0 +1,5 @@
+# The shared ../latexmkrc defaults to LuaLaTeX; the fonts of this test are
+# reached through a pdfTeX map, so it has to run with pdfLaTeX.  The file is
+# read after the shared one (see compile.sh), so it takes precedence.
+$pdf_mode = 1;
+$pdflatex = 'pdflatex -synctex=1 -interaction=nonstopmode -file-line-error -recorder';

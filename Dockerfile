@@ -39,23 +39,104 @@ RUN apt-get install fonts-dejavu -y
 
 RUN apt-get install fonts-noto -y
 
+# system fonts that TeX Live does not ship at all: Noto CJK, the Debian
+# Chinese fonts (WenQuanYi, Arphic Uming/Ukai), Unifont, the IPA/Un fonts and
+# a few metric-compatible replacements (Liberation, Carlito/Caladea,
+# FreeFont). fontconfig makes them available by name to fontspec/xeCJK, to
+# LuaTeX and to tools like inkscape.
+RUN apt-get install -y \
+      fonts-noto-cjk \
+      fonts-noto-cjk-extra \
+      fonts-noto-color-emoji \
+      fonts-arphic-uming \
+      fonts-arphic-ukai \
+      fonts-wqy-microhei \
+      fonts-wqy-zenhei \
+      fonts-unifont \
+      fonts-ipaexfont \
+      fonts-unfonts-core \
+      fonts-liberation \
+      fonts-crosextra-carlito \
+      fonts-crosextra-caladea \
+      fonts-freefont-ttf \
+      fonts-texgyre \
+      fonts-lmodern \
+      fonts-stix
+
+# TeX Live keeps its fonts in texmf-dist, where fontconfig does not look, so
+# they could only be used by file name ("FandolSong-Regular.otf") and not by
+# family name ("FandolSong"). Registering the two font directories makes the
+# fonts that scheme-full installed usable by name, in xelatex/lualatex
+# documents as well as in inkscape.
+RUN TLROOT=$(find /usr/local/texlive -maxdepth 1 -type d -name '20*') && \
+    mkdir -p /etc/fonts/conf.d && \
+    printf '%s\n' \
+      '<?xml version="1.0"?>' \
+      '<!DOCTYPE fontconfig SYSTEM "fonts.dtd">' \
+      '<fontconfig>' \
+      "  <dir>$TLROOT/texmf-dist/fonts/opentype</dir>" \
+      "  <dir>$TLROOT/texmf-dist/fonts/truetype</dir>" \
+      '</fontconfig>' \
+      > /etc/fonts/conf.d/60-texlive-fonts.conf && \
+    cat /etc/fonts/conf.d/60-texlive-fonts.conf
+
 # install the Chinese fonts vendored from
 # https://github.com/Haixing-Hu/latex-chinese-fonts (see fonts/README.md).
 # The fonts are bind-mounted instead of COPY-ed so that they do not end up in
 # an extra image layer of their own; BuildKit is required for this.
+#
+# The TeX Live "zhmetrics" metrics (uniyou20, unisong5b, gbkyou20, ...) carry
+# no glyphs: the zhmetrics map expects the Windows files simyou.ttf,
+# simsun.ttc, ... for them. The vendored fonts are therefore installed a
+# second time under those names, and the map itself (fonts/zhwinfonts-simfonts.map,
+# the pdfTeX lines of the zhmetrics package) is enabled through updmap, so
+# that documents using these fonts work without having to \input zhwinfonts.tex
+# first.
 RUN --mount=type=bind,source=fonts,target=/tmp/latex-chinese-fonts \
-    mkdir -p /usr/local/texlive/texmf-local/fonts/truetype/ \
-             /usr/local/texlive/texmf-local/fonts/opentype/ \
-             /usr/share/fonts/ && \
-    find /tmp/latex-chinese-fonts -name "*.ttf" -exec cp {} /usr/local/texlive/texmf-local/fonts/truetype/ \; && \
-    find /tmp/latex-chinese-fonts -name "*.ttc" -exec cp {} /usr/local/texlive/texmf-local/fonts/truetype/ \; && \
-    find /tmp/latex-chinese-fonts -name "*.otf" -exec cp {} /usr/local/texlive/texmf-local/fonts/opentype/ \; && \
+    TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -1) && \
+    export PATH="$TLBIN:$PATH" && \
+    TRUETYPE=/usr/local/texlive/texmf-local/fonts/truetype && \
+    OPENTYPE=/usr/local/texlive/texmf-local/fonts/opentype && \
+    MAPS=/usr/local/texlive/texmf-local/fonts/map/pdftex/local && \
+    mkdir -p "$TRUETYPE" "$OPENTYPE" "$MAPS" /usr/share/fonts && \
+    find /tmp/latex-chinese-fonts -name "*.ttf" -exec cp {} "$TRUETYPE" \; && \
+    find /tmp/latex-chinese-fonts -name "*.ttc" -exec cp {} "$TRUETYPE" \; && \
+    find /tmp/latex-chinese-fonts -name "*.otf" -exec cp {} "$OPENTYPE" \; && \
     find /tmp/latex-chinese-fonts -name "*.ttf" -exec cp {} /usr/share/fonts/ \; && \
     find /tmp/latex-chinese-fonts -name "*.ttc" -exec cp {} /usr/share/fonts/ \; && \
     find /tmp/latex-chinese-fonts -name "*.otf" -exec cp {} /usr/share/fonts/ \; && \
+    for pair in SimSun.ttc:simsun.ttc SimHei.ttf:simhei.ttf KaiTi.ttf:simkai.ttf \
+                FangSong.ttf:simfang.ttf LiSu.ttf:simli.ttf YouYuan.ttf:simyou.ttf ; do \
+      src="${pair%%:*}"; dst="${pair##*:}"; \
+      find /tmp/latex-chinese-fonts -name "$src" -exec cp {} "$TRUETYPE/$dst" \; ; \
+    done && \
+    cp /tmp/latex-chinese-fonts/zhwinfonts-simfonts.map "$MAPS"/ && \
     mktexlsr && \
+    updmap-sys --enable Map=zhwinfonts-simfonts.map && \
     fc-cache -fv
 
+# Fail the build instead of shipping an image in which documents that use
+# these fonts stop with "font not found". The TeX Live binaries are called by
+# path because the apt packages of TeX Live (installed above for the extra
+# Type1 fonts) put their own, older copies into /usr/bin.
+RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -1) && \
+    export PATH="$TLBIN:$PATH" && \
+    TLROOT=$(find /usr/local/texlive -maxdepth 1 -type d -name '20*') && \
+    for f in uniyou20.tfm gbkyou20.tfm FandolSong-Regular.otf gbsn00lp.ttf \
+             simyou.ttf simsun.ttc ; do \
+      kpsewhich "$f" > /dev/null || \
+        { echo "ERROR: $f is missing from the image"; exit 1; } ; \
+      echo "  found $f"; \
+    done && \
+    grep -q '@Unicode@' "$TLROOT/texmf-var/web2c/pdftex/pdftex.map" || \
+      { echo "ERROR: the zhmetrics map is not enabled in pdftex.map"; exit 1; } && \
+    for family in FandolSong YouYuan 'Noto Sans CJK SC' ; do \
+      match=$(fc-match -f '%{family}' "$family") ; \
+      case "$match" in \
+        *"$family"*) echo "  fontconfig knows $family" ;; \
+        *) echo "ERROR: fontconfig resolves $family to $match"; exit 1 ;; \
+      esac ; \
+    done
 
 # enable shell-escape by default:
 RUN TEXLIVE_FOLDER=$(find /usr/local/texlive/ -type d -name '20*') \

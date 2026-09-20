@@ -1,5 +1,9 @@
 import { Strategy as OAuth2Strategy } from 'passport-oauth2'
 import logger from '@overleaf/logger'
+import {
+  DEFAULT_CALLBACK_PATH,
+  resolveCallbackURL,
+} from './OidcCallbackUrl.mjs'
 
 // Minimal OpenID Connect strategy built on top of passport-oauth2, which is
 // already a dependency of the web service. passport-oauth2 performs the
@@ -18,17 +22,40 @@ export class OidcStrategy extends OAuth2Strategy {
         tokenURL: options.tokenURL,
         clientID: options.clientID,
         clientSecret: options.clientSecret,
-        callbackURL: options.callbackURL,
+        // A path instead of an absolute URL: passport-oauth2 resolves it
+        // against the URL of the request being authenticated, so the redirect
+        // URI follows the host name the user is browsing (see
+        // OidcCallbackUrl.mjs).
+        callbackURL: options.callbackURL || DEFAULT_CALLBACK_PATH,
         scope: options.scope,
         // Enables the `state` parameter, which passport-oauth2 stores in and
         // verifies against the session. Without it no CSRF protection is
         // performed on the callback.
         state: true,
+        // Read the X-Forwarded-* headers when deriving the callback URL, like
+        // the rest of the application does (`behindProxy`).
+        proxy: options.proxy,
       },
       verify
     )
     this.name = 'oidc'
     this._userInfoURL = options.userInfoURL
+    this._configuredCallbackURL = options.callbackURL
+    this._callbackURLs = options.callbackURLs || []
+  }
+
+  authenticate(req, options) {
+    if (options && options.callbackURL) {
+      return super.authenticate(req, options)
+    }
+    return super.authenticate(req, {
+      ...options,
+      callbackURL: resolveCallbackURL(req, {
+        callbackURL: this._configuredCallbackURL,
+        callbackURLs: this._callbackURLs,
+        trustProxy: this._trustProxy === true,
+      }),
+    })
   }
 
   userProfile(accessToken, done) {

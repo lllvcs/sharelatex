@@ -28,6 +28,8 @@ import HttpErrorHandler from '../Features/Errors/HttpErrorHandler.mjs'
 import UserSessionsManager from '../Features/User/UserSessionsManager.mjs'
 import AuthenticationController from '../Features/Authentication/AuthenticationController.mjs'
 import { OidcStrategy } from '../Features/Authentication/OidcStrategy.mjs'
+import { parseCallbackUrls } from '../Features/Authentication/OidcCallbackUrl.mjs'
+import { applyWellKnownConfiguration } from '../Features/Authentication/OidcDiscovery.mjs'
 import SessionManager from '../Features/Authentication/SessionManager.mjs'
 import AdminAuthorizationHelper from '../Features/Helpers/AdminAuthorizationHelper.mjs'
 import Modules from './Modules.mjs'
@@ -220,6 +222,12 @@ passport.use(
     AuthenticationController.doPassportLogin
   )
 )
+// OpenID Connect discovery: with OVERLEAF_OIDC_WELL_KNOWN_URL the endpoints
+// that are not configured explicitly are read from the provider's discovery
+// document (see OidcDiscovery.mjs). This has to happen before the strategy is
+// registered, because the issuer from the document enables OIDC login as well.
+await applyWellKnownConfiguration({ logger })
+
 if (process.env.OVERLEAF_OIDC_ISSUER !== undefined) {
   passport.use(
     'oidc',
@@ -231,7 +239,11 @@ if (process.env.OVERLEAF_OIDC_ISSUER !== undefined) {
         userInfoURL: process.env.OVERLEAF_OIDC_USERINFO_URL,
         clientID: process.env.OVERLEAF_OIDC_CLIENT_ID,
         clientSecret: process.env.OVERLEAF_OIDC_CLIENT_SECRET,
+        // The redirect URI is derived from the request that starts the login
+        // unless it is pinned; see OidcCallbackUrl.mjs.
         callbackURL: process.env.OVERLEAF_OIDC_CALLBACK_URL,
+        callbackURLs: parseCallbackUrls(process.env.OVERLEAF_OIDC_CALLBACK_URLS),
+        proxy: Settings.behindProxy,
         scope: process.env.OVERLEAF_OIDC_SCOPE || 'openid profile email',
       },
       AuthenticationController.verifyOpenIDConnect

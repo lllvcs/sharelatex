@@ -4,8 +4,6 @@ import Settings from '@overleaf/settings'
 const supportModuleAvailable =
   Settings.moduleImportSequence?.includes('support')
 
-const oidcEnabled = process.env.OVERLEAF_OIDC_ISSUER !== undefined
-
 const symbolPaletteModuleAvailable =
   Settings.moduleImportSequence?.includes('symbol-palette')
 
@@ -37,7 +35,9 @@ const Features = {
       (Boolean(Settings.ldap) && Boolean(Settings.ldap.enable)) ||
       (Boolean(Settings.saml) && Boolean(Settings.saml.enable)) ||
       Boolean(Settings.overleaf) ||
-      oidcEnabled
+      // read on every call: the issuer may also come from the OIDC discovery
+      // document, which is only read while the server starts
+      process.env.OVERLEAF_OIDC_ISSUER !== undefined
     )
   },
 
