@@ -73,14 +73,17 @@ docker rm tmp
 | `app/src/Features/Authentication/OidcCallbackUrl.mjs` | **new file**: picks the redirect URI for a request (automatic/derived, one URL, or a list of URLs); no imports besides `node:url`, so `tests/oidc-callback-url.test.mjs` can test it on its own |
 | `app/src/Features/Authentication/OidcDiscovery.mjs` | **new file**: reads the provider's discovery document (`OVERLEAF_OIDC_WELL_KNOWN_URL`) and fills the unset `OVERLEAF_OIDC_*` endpoint variables; only imports `node:timers/promises`, tested by `tests/oidc-well-known.test.mjs` |
 | `app/src/Features/Authentication/OidcEmailTrust.mjs` | **new file**: whether the `email` claim may identify an account - it decides whether an existing account is linked and whether the stored address is rewritten (`email_verified`, overridable with `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL`); no imports, tested by `tests/oidc-email-trust.test.mjs` |
-| `app/src/Features/Authentication/AuthenticationController.mjs` | adds `oidcLogin`, `oidcLoginCallback`, `verifyOpenIDConnect`, `extractOidcIdFromProfile`, `ensureOidcLoginEnabled`; extracts `createPassportCallback`; disables local login when `OVERLEAF_ENABLE_LOCAL_LOGIN=false`; `ensureOidcLoginEnabled` accepts the request only when the strategy is registered (`oidcIsConfigured`) |
-| `app/src/infrastructure/Server.mjs` | reads the discovery document when `OVERLEAF_OIDC_WELL_KNOWN_URL` is set and registers the `oidc` passport strategy when the configuration is usable (`oidcIsConfigured`), passing `OVERLEAF_OIDC_CALLBACK_URL(S)` and Overleaf's `behindProxy` setting |
-| `app/src/infrastructure/ExpressLocals.mjs` | exposes the login/OIDC configuration to the views; the SSO button is only offered when the strategy is registered (`oidcIsConfigured`) |
+| `app/src/Features/Authentication/OidcIdToken.mjs` | **new file**: verifies the provider's `id_token` (signature against the JWKS, `iss`, `aud`, `exp`/`nbf`/`iat`, `sub`; RSA/ECDSA only) with `node:crypto`, so no dependency is added; fetch, clock and the JWKS cache are injectable, tested by `tests/oidc-id-token.test.mjs` |
+| `app/src/Features/Authentication/OidcLinkRequest.mjs` | **new file**: the pending "link this identity after the password was confirmed" state (session-bound, 10 minutes, single use), the `OVERLEAF_OIDC_LINK_MODE` policy and the login page messages (a code from the query string is mapped to text); no imports, tested by `tests/oidc-link-request.test.mjs` |
+| `app/src/Features/Authentication/AuthenticationController.mjs` | adds `oidcLogin`, `oidcLoginCallback`, `oidcLinkPage`, `oidcLink`, `verifyOpenIDConnect`, `extractOidcIdFromProfile`, `ensureOidcLoginEnabled`; extracts `createPassportCallback`; disables local login when `OVERLEAF_ENABLE_LOCAL_LOGIN=false`; `ensureOidcLoginEnabled` accepts the request only when the strategy is registered (`oidcIsConfigured`) |
+| `app/src/infrastructure/Server.mjs` | reads the discovery document when `OVERLEAF_OIDC_WELL_KNOWN_URL` is set and registers the `oidc` passport strategy when the configuration is usable (`oidcIsConfigured`), passing `OVERLEAF_OIDC_CALLBACK_URL(S)`, `OVERLEAF_OIDC_JWKS_URL`, `OVERLEAF_OIDC_REQUIRE_ID_TOKEN` and Overleaf's `behindProxy` setting |
+| `app/src/infrastructure/ExpressLocals.mjs` | exposes the login/OIDC configuration to the views; the SSO button is only offered when the strategy is registered (`oidcIsConfigured`); turns `?oidc_error=<code>` into the message the login page shows (unknown codes render nothing) |
 | `app/src/infrastructure/Features.mjs` | counts OIDC as an external authentication system (hides the registration page unless `OVERLEAF_ENABLE_REGISTRATION` overrides it); reads the issuer when it is asked instead of at import time, so the discovery document can supply it |
 | `app/src/models/User.mjs` | adds the `oidcIdentifier` field |
 | `app/src/Features/User/UserPrimaryEmailCheckHandler.mjs` | skips the primary email check for OIDC users (the mail address is asserted by the provider) |
-| `app/src/router.mjs` | adds `/login/oidc` and `/login/oidc/callback`; redirects `/register` to `/login` when registration is disabled |
-| `app/views/user/login.pug` | hides the password form when local login is disabled, adds the SSO button and the `OVERLEAF_LOGIN_INFO_TEXT` text |
+| `app/src/router.mjs` | adds `/login/oidc`, `/login/oidc/callback` and the password step `/login/oidc/link` (GET and POST, with the same rate limit and captcha middleware as a password login); redirects `/register` to `/login` when registration is disabled |
+| `app/views/user/login.pug` | hides the password form when local login is disabled, adds the SSO button, the `OVERLEAF_LOGIN_INFO_TEXT` text and the reason a single sign-on login failed |
+| `app/views/user/login-oidc-link.pug` | **new file**: the page that asks for the password of an existing account before an OIDC identity is bound to it |
 | `app/views/layout/navbar-marketing.pug` | optional SSO button in the navigation bar |
 
 ## Notes
@@ -138,3 +141,17 @@ docker rm tmp
   stated at all (logged). `email_verified: false` refuses the link and keeps the
   stored address. See `OidcEmailTrust.mjs`; the decision lives in one place so
   the policy cannot drift between the two call sites.
+- An identity that matches an existing account which is **not linked yet** is
+  parked in the session and the user has to confirm the account's password
+  (`/login/oidc/link`) before the identity is bound (`OidcLinkRequest.mjs`). The
+  bind itself is a `$set` of `oidcIdentifier`, done only after the credentials
+  were checked through the same code path a password login uses, so failed
+  attempts are audited and rate limited identically. `OVERLEAF_OIDC_LINK_MODE=auto`
+  restores the earlier behaviour of linking straight away.
+- `OidcStrategy.mjs` normalises the two call shapes of `passport-oauth2` and
+  captures the token response itself (keyed by the authorization code, which is
+  unique per request), so the `id_token` can be verified without depending on
+  which passport-oauth2 version is installed. The strategy hands the application
+  `verify(req, accessToken, refreshToken, { params, idTokenClaims }, profile, done)`
+  and refuses the login when the token does not verify or when its `sub` differs
+  from the one in the userinfo response.

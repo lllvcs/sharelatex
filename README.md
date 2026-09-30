@@ -131,6 +131,9 @@ services:
 | `OVERLEAF_OIDC_SCOPE` | Scopes to request (default `openid profile email`). |
 | `OVERLEAF_OIDC_MATCHING` | Which claim identifies the account, `id` (the `sub` claim, default) or `username` (the `preferred_username` claim). |
 | `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL` | Set to `true` to trust the `email` claim even when the provider reports `email_verified: false`, or `false` to refuse a claim the provider does not state at all. See [Behaviour](#behaviour). |
+| `OVERLEAF_OIDC_LINK_MODE` | What a first login does when its email address matches an existing account that is not linked yet: `password` (default) asks for the password of that account before linking it, `auto` links without asking. See [Behaviour](#behaviour). |
+| `OVERLEAF_OIDC_JWKS_URL` | The provider's JWKS, against which the identity token is verified. Taken from the discovery document's `jwks_uri` when unset; without it identity tokens cannot be verified. |
+| `OVERLEAF_OIDC_REQUIRE_ID_TOKEN` | Set to `true` to refuse a login when the provider returns no identity token or no JWKS is known (default `false`: such a login is allowed and logged). |
 | `OVERLEAF_ENABLE_LOCAL_LOGIN` | Set to `false` to hide and disable the email/password login (default `true`). |
 | `OVERLEAF_LOGIN_INFO_TEXT` | HTML rendered above the login form (default `Welcome to Overleaf! Log in to your account below.`; set it to an empty value to show nothing). |
 | `OVERLEAF_LOGIN_OIDC_BUTTON` | Label of the SSO button (default `Log in with SSO`). |
@@ -178,6 +181,24 @@ provider URL does not take the whole instance down. `OVERLEAF_OIDC_CLIENT_ID`
 and `OVERLEAF_OIDC_CLIENT_SECRET` are needed as well (a discovery document does
 not contain them); when one of them is missing, OIDC login is disabled with a
 log message instead of stopping the container.
+
+### Identity token verification
+
+The identity token (`id_token`) the provider returns from its token endpoint is
+verified before a login is accepted: the signature is checked against the
+provider's JWKS (`jwks_uri` from the discovery document, or
+`OVERLEAF_OIDC_JWKS_URL`), together with `iss`, `aud` (it has to name the client
+id), `exp`/`nbf`/`iat` (60 seconds of clock skew are allowed) and the presence of
+`sub`. Only the RSA and ECDSA signature algorithms are accepted - never `none`,
+never a shared-secret one. The `sub` of the token also has to equal the `sub` of
+the userinfo response, so both responses are known to describe the same person.
+
+Not every provider returns an identity token, and a provider that keeps its keys
+elsewhere needs `OVERLEAF_OIDC_JWKS_URL`: when verification is impossible the
+login is allowed and logged, so an existing deployment keeps working. Set
+`OVERLEAF_OIDC_REQUIRE_ID_TOKEN: true` to refuse those logins instead. A token
+that is presented but does not verify always refuses the login, and the login
+page says so. The flow does not send a `nonce`, so none can be checked here.
 
 ### Redirect URI (several domains and reverse proxies)
 
@@ -236,10 +257,23 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
 
 ### Behaviour
 
-- On the first login the account is looked up by its OIDC identifier. If no
-  account is linked yet, an existing account with the same **email address**
-  claimed by the provider is linked to the OIDC identity; otherwise a new
-  account is created with a confirmed email address.
+- **An identity that is already linked signs the user in.** The account is
+  looked up by its OIDC identifier (`OVERLEAF_OIDC_MATCHING`), and nothing else
+  is asked for.
+- **An email address that belongs to an existing account which is not linked yet
+  does not sign anybody in by itself.** The identity is parked in the session for
+  ten minutes and the user is sent to `/login/oidc/link`, a page that asks for
+  the password of that account (the address is prefilled). Confirming it binds
+  the OIDC identity to the account and finishes the login; the password goes
+  through the normal credential check, so a wrong password is audited, rate
+  limited and answered exactly like a failed password login. This is what stops
+  somebody who can set an arbitrary address at the provider from taking an
+  account over. `OVERLEAF_OIDC_LINK_MODE: auto` skips the step and links right
+  away (the behaviour before the step existed), which is only safe when the
+  provider verifies addresses.
+- **No account with that address: one is created**, with the address marked as
+  confirmed, because the provider vouches for it (see the point below about
+  providers that say `email_verified: false`).
 - On every login the first name and last name of the account are synchronised
   with the claims of the provider; the email address is only taken over when the
   provider vouches for it (next point).
@@ -256,9 +290,13 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   `false` to refuse a claim the provider does not state.
 - Because the email address is asserted by the provider, the "confirm your
   email" prompts are skipped for OIDC users.
-- Failed logins (for example when a user cancels the consent screen) send the
-  user back to `/login`; the reason is written to the container log
-  (`OIDC login failed`).
+- A failed login sends the user back to `/login`, which now **shows why**: the
+  provider did not verify the address, the address is linked to another
+  identity, the confirmation expired before the password was entered, the
+  password did not match, or the identity token did not verify. The reason is
+  written to the container log as well (`OIDC login failed`). The texts are
+  English; the page renders only the codes this image knows, never anything the
+  provider returned.
 
 ## Fonts
 

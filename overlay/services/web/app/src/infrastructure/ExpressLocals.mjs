@@ -17,6 +17,7 @@ import { addOptionalCleanupHandlerAfterDrainingConnections } from './GracefulShu
 import { sanitizeSessionUserForFrontEnd } from './FrontEndUser.mjs'
 import { expressify } from '@overleaf/promise-utils'
 import { oidcIsConfigured } from '../Features/Authentication/OidcDiscovery.mjs'
+import { oidcMessageFor } from '../Features/Authentication/OidcLinkRequest.mjs'
 
 const {
   canRedirectToAdminDomain,
@@ -137,6 +138,11 @@ export default async function (webRouter, privateApiRouter, publicApiRouter) {
       process.env.OVERLEAF_LOGIN_OIDC_BUTTON || 'Log in with SSO'
     res.locals.oidc_login_in_navbar =
       process.env.OVERLEAF_OIDC_LOGIN_IN_NAVBAR === 'true'
+    // A failed OIDC login redirects here with a code; only the codes we know are
+    // turned into text, so nothing a provider said can be rendered.
+    res.locals.oidc_error_message = oidcMessageFor(
+      getRawReqInput(req).query.oidc_error
+    )
     next()
   })
 

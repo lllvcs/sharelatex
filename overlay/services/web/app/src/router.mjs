@@ -260,6 +260,22 @@ async function initialize(webRouter, privateApiRouter, publicApiRouter) {
   )
   AuthenticationController.addEndpointToLoginWhitelist('/login/oidc/callback')
 
+  // The password step that links an OIDC identity to an existing account. The
+  // whitelist matches on the path, so it covers the POST below as well.
+  webRouter.get('/login/oidc/link', AuthenticationController.oidcLinkPage)
+  AuthenticationController.addEndpointToLoginWhitelist('/login/oidc/link')
+  webRouter.post(
+    '/login/oidc/link',
+    // Same protection as a password login: a rate limit per IP and per email,
+    // and the captcha middleware - which is what fills the audit info the
+    // credential check reads. The page has no captcha widget of its own, so with
+    // reCAPTCHA enabled the step would need one (the default has none).
+    RateLimiterMiddleware.rateLimit(overleafLoginRateLimiter),
+    RateLimiterMiddleware.loginRateLimitEmail(),
+    CaptchaMiddleware.validateCaptcha('login'),
+    AuthenticationController.oidcLink
+  )
+
   webRouter.post(
     '/login',
     RateLimiterMiddleware.rateLimit(overleafLoginRateLimiter), // rate limit IP (20 / 60s)

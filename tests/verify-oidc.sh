@@ -10,6 +10,8 @@ for f in \
   /overleaf/services/web/app/src/Features/Authentication/OidcCallbackUrl.mjs \
   /overleaf/services/web/app/src/Features/Authentication/OidcDiscovery.mjs \
   /overleaf/services/web/app/src/Features/Authentication/OidcEmailTrust.mjs \
+  /overleaf/services/web/app/src/Features/Authentication/OidcIdToken.mjs \
+  /overleaf/services/web/app/src/Features/Authentication/OidcLinkRequest.mjs \
   /overleaf/services/web/app/src/infrastructure/Server.mjs \
   /overleaf/services/web/app/src/infrastructure/Features.mjs \
   /overleaf/services/web/app/src/infrastructure/ExpressLocals.mjs \
@@ -48,7 +50,7 @@ try {
   const { User } = await import('./app/src/models/User.mjs')
   const Features = (await import('./app/src/infrastructure/Features.mjs')).default
 
-  for (const fn of ['oidcLogin', 'oidcLoginCallback', 'verifyOpenIDConnect', 'extractOidcIdFromProfile', 'ensureOidcLoginEnabled']) {
+  for (const fn of ['oidcLogin', 'oidcLoginCallback', 'oidcLinkPage', 'oidcLink', 'verifyOpenIDConnect', 'extractOidcIdFromProfile', 'ensureOidcLoginEnabled']) {
     if (typeof controller[fn] !== 'function') throw new Error('AuthenticationController.' + fn + ' is missing')
   }
   if (typeof OidcStrategy !== 'function') throw new Error('OidcStrategy is missing')
@@ -71,6 +73,12 @@ node --test /tests/oidc-well-known.test.mjs
 
 echo "== the email claim is only trusted when the provider vouches for it =="
 node --test /tests/oidc-email-trust.test.mjs
+
+echo "== the identity token is verified against the provider keys =="
+node --test /tests/oidc-id-token.test.mjs
+
+echo "== the pending link step and the login page messages =="
+node --test /tests/oidc-link-request.test.mjs
 
 echo "== the views compile =="
 # the Dockerfile regenerates the precompiled views; this makes a failure

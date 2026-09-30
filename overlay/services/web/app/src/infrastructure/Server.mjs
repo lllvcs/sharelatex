@@ -257,10 +257,20 @@ if (oidcIsConfigured(process.env)) {
         callbackURLs: parseCallbackUrls(process.env.OVERLEAF_OIDC_CALLBACK_URLS),
         proxy: Settings.behindProxy,
         scope: process.env.OVERLEAF_OIDC_SCOPE || DEFAULT_SCOPE,
+        // Verifying the identity token needs the provider's keys; the discovery
+        // document fills OVERLEAF_OIDC_JWKS_URL from its `jwks_uri`.
+        jwksURL: process.env.OVERLEAF_OIDC_JWKS_URL,
+        requireIdToken: process.env.OVERLEAF_OIDC_REQUIRE_ID_TOKEN === 'true',
+        logger,
       },
       AuthenticationController.verifyOpenIDConnect
     )
   )
+  if (!process.env.OVERLEAF_OIDC_JWKS_URL) {
+    logger.warn(
+      'OIDC: OVERLEAF_OIDC_JWKS_URL is not set and the provider published no jwks_uri, so identity tokens cannot be verified; set it (or OVERLEAF_OIDC_REQUIRE_ID_TOKEN=true to refuse such logins)'
+    )
+  }
 } else if (
   process.env.OVERLEAF_OIDC_ISSUER !== undefined ||
   process.env.OVERLEAF_OIDC_WELL_KNOWN_URL !== undefined

@@ -124,6 +124,9 @@ services:
 | `OVERLEAF_OIDC_SCOPE` | 请求的 scope（默认 `openid profile email`）。 |
 | `OVERLEAF_OIDC_MATCHING` | 用哪个声明匹配账号：`id`（`sub` 声明，默认）或 `username`（`preferred_username` 声明）。 |
 | `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL` | 设为 `true` 时即使提供方声明 `email_verified: false` 也信任 `email`；设为 `false` 时连「提供方未声明该字段」也不信任。见[行为说明](#行为说明)。 |
+| `OVERLEAF_OIDC_LINK_MODE` | 首次登录时邮箱匹配到「尚未绑定 OIDC 的已有账号」时怎么办：`password`（默认）要求输入该账号密码后才绑定，`auto` 不询问直接绑定。见[行为说明](#行为说明)。 |
+| `OVERLEAF_OIDC_JWKS_URL` | 提供方的 JWKS，用于校验 identity token。不设置时会取 discovery 文档里的 `jwks_uri`；没有它就无法校验 identity token。 |
+| `OVERLEAF_OIDC_REQUIRE_ID_TOKEN` | 设为 `true` 时，提供方未返回 identity token、或未知 JWKS 的登录会被拒绝（默认 `false`：允许并记录日志）。 |
 | `OVERLEAF_ENABLE_LOCAL_LOGIN` | 设为 `false` 时隐藏并禁用邮箱/密码登录（默认 `true`）。 |
 | `OVERLEAF_LOGIN_INFO_TEXT` | 显示在登录表单上方的 HTML 内容（默认为 `Welcome to Overleaf! Log in to your account below.`；设为空值则不显示）。 |
 | `OVERLEAF_LOGIN_OIDC_BUTTON` | SSO 按钮文字（默认 `Log in with SSO`）。 |
@@ -162,6 +165,21 @@ OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm/.well-known
 提供方地址写错就让整个站点不可用。另外仍需 `OVERLEAF_OIDC_CLIENT_ID` 与
 `OVERLEAF_OIDC_CLIENT_SECRET`（discovery 文档里没有这两项）；缺少任一项时，
 OIDC 登录会被关闭并记录日志，而不是让容器启动失败。
+
+### Identity token 校验
+
+provider 从 token 端点返回的 identity token（`id_token`）会在登录生效前校验：
+签名要对得上提供方 JWKS 里的公钥（来自 discovery 文档的 `jwks_uri`，或显式设置的
+`OVERLEAF_OIDC_JWKS_URL`），同时检查 `iss`、`aud`（必须包含本 client id）、
+`exp`/`nbf`/`iat`（允许 60 秒时钟偏差）以及 `sub` 是否存在；签名算法只接受 RSA 与
+ECDSA，`none` 和共享密钥类一律拒绝。token 的 `sub` 还必须与 userinfo 返回的 `sub`
+一致，这样两份响应才被确认是同一个用户。
+
+并非所有提供方都会返回 identity token，密钥放在别处的提供方需要显式设置
+`OVERLEAF_OIDC_JWKS_URL`：**无法校验时默认允许登录并记录日志**，以免已有的部署直接
+失效；设 `OVERLEAF_OIDC_REQUIRE_ID_TOKEN: true` 可以改为拒绝这类登录。反之，**一旦
+返回了 token 但校验不通过，登录一律拒绝**，登录页会说明原因。本流程不发送 `nonce`，
+因此也无法校验它。
 
 ### 回调地址（多域名与反向代理）
 
@@ -214,9 +232,17 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
 
 ### 行为说明
 
-- 首次登录时按 OIDC 标识查找账号。如果该标识尚未绑定任何账号，则会把提供方
-  声明的**邮箱地址**相同的已有账号绑定到该 OIDC 身份；若不存在则创建新账号，
-  且邮箱直接视为已验证。
+- **已经绑定过该 OIDC 标识的账号，直接登录**（按 `OVERLEAF_OIDC_MATCHING` 指定的
+  声明查找），不再额外询问。
+- **邮箱匹配到「已有但尚未绑定 OIDC」的账号时，不会直接登录。** 该 OIDC 身份会先
+  暂存在会话里（10 分钟有效），用户被带到 `/login/oidc/link`，要求输入该账号的密码
+  （邮箱已预填）。密码确认成功后即把 OIDC 身份绑定到该账号并完成登录；密码走的是
+  标准校验流程，所以密码错误的审计、限流与提示都和普通密码登录一致。这一步正是为了
+  防止「能在提供方侧随意设置邮箱的人」接管已有账号。设
+  `OVERLEAF_OIDC_LINK_MODE: auto` 可跳过这一步直接绑定（即该步骤存在之前的行为），
+  只有在提供方确实验证邮箱时才安全。
+- **没有任何账号使用该邮箱时，创建新账号**，并把邮箱标记为已验证——前提是提供方为
+  该地址背书（见下一条 `email_verified: false` 的处理）。
 - 每次登录都会用提供方的声明同步账号的名与姓；邮箱地址只在提供方为其背书时才
   会改写（见下一条）。
 - **只有提供方为邮箱背书时，`email` 才会被用来识别账号。** 绑定已有账号、以及
@@ -228,8 +254,10 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL: true` 仍然信任这种声明，或设 `false`
   连未声明的字段也不信任。
 - 由于邮箱由提供方保证，OIDC 用户不会收到「确认邮箱」提示。
-- 登录失败（例如用户取消授权）会跳回 `/login`，具体原因写入容器日志
-  （`OIDC login failed`）。
+- 登录失败会跳回 `/login`，并**在页面上显示原因**：提供方未验证该邮箱、该邮箱已
+  绑定到另一个身份、确认流程超时、密码不匹配，或 identity token 校验失败；同时也会
+  写入容器日志（`OIDC login failed`）。这些提示文字是英文的，而且页面只渲染本镜像
+  已知的错误码，绝不会把提供方返回的内容直接显示出来。
 
 ## 字体
 

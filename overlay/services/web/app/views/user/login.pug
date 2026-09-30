@@ -15,6 +15,8 @@ block content
 							h1 #{translate("log_in")}
 					if login_info_text
 						p !{login_info_text}
+					if oidc_error_message
+						.alert.alert-danger(role='alert') #{oidc_error_message}
 					if local_login_enabled !== false
 						form(name='loginForm' data-ol-async-form action='/login' method='POST')
 							input(name='_csrf' type='hidden' value=csrfToken)

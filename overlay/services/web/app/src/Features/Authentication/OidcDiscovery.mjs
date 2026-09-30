@@ -149,6 +149,13 @@ export function applyDocument(document, env = process.env) {
     applied.OVERLEAF_OIDC_ISSUER = document.issuer
   }
 
+  // The JWKS URL is not required (not every provider publishes one), but it is
+  // what makes verifying the identity token possible, so take it when present.
+  if (!env.OVERLEAF_OIDC_JWKS_URL && isFilled(document.jwks_uri)) {
+    env.OVERLEAF_OIDC_JWKS_URL = document.jwks_uri
+    applied.OVERLEAF_OIDC_JWKS_URL = document.jwks_uri
+  }
+
   const { scopes } = scopesForDocument(document, env)
   if (scopes.join(' ') !== (env.OVERLEAF_OIDC_SCOPE || DEFAULT_SCOPE)) {
     env.OVERLEAF_OIDC_SCOPE = scopes.join(' ')

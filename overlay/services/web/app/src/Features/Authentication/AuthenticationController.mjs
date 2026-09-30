@@ -37,6 +37,14 @@ import EmailHelper from '../Helpers/EmailHelper.mjs'
 import SplitTestHandler from '../SplitTests/SplitTestHandler.mjs'
 import { oidcIsConfigured } from './OidcDiscovery.mjs'
 import { emailClaimTrust } from './OidcEmailTrust.mjs'
+import {
+  attemptsToLinkAccount,
+  clearLinkRequest,
+  createLinkRequest,
+  linkMode,
+  readLinkRequest,
+  storeLinkRequest,
+} from './OidcLinkRequest.mjs'
 
 const { hasAdminAccess } = AdminAuthorizationHelper
 
@@ -717,14 +725,27 @@ const AuthenticationController = {
     }
     return passport.authenticate('oidc', async (err, user, info) => {
       if (err) {
+        // A failure we can name (the identity token did not verify) is shown on
+        // the login page; anything else is an error page.
+        const code = err.oidcErrorCode
+        if (code) {
+          logger.err({ err }, 'OIDC login failed')
+          return res.redirect(`/login?oidc_error=${code}`)
+        }
         return next(err)
       }
       if (!user) {
-        // e.g. the user canceled the consent screen or the `state` check
-        // failed; send the user back to the login page and keep the reason
-        // in the server log
-        logger.warn({ info }, 'OIDC login failed')
-        return res.redirect('/login')
+        const code = (info && info.code) || 'oidc-failed'
+        if (code === 'oidc-link-required') {
+          // The address belongs to an existing account that is not linked yet:
+          // ask for its password (see OidcLinkRequest.mjs).
+          return res.redirect('/login/oidc/link')
+        }
+        // e.g. the user canceled the consent screen, the `state` check failed,
+        // or the provider asserted something we will not act on; send the user
+        // back to the login page, which shows the reason, and log it as well
+        logger.warn({ info, code }, 'OIDC login failed')
+        return res.redirect(`/login?oidc_error=${encodeURIComponent(code)}`)
       }
       try {
         AuthenticationController.setAuditInfo(req, { method: 'OIDC login' })
@@ -807,14 +828,16 @@ const AuthenticationController = {
     return await doc.save()
   },
 
-  async verifyOpenIDConnect(accessToken, refreshToken, profile, done) {
+  // The verify callback of OidcStrategy, which passes the request (the pending
+  // "link this identity" step lives in the session) and the verified identity
+  // token (`tokens.idTokenClaims`, see OidcIdToken.mjs).
+  async verifyOpenIDConnect(req, accessToken, refreshToken, tokens, profile, done) {
     try {
       const oidcId = AuthenticationController.extractOidcIdFromProfile(profile)
       const email = profile.emails[0].value
       // Whether the provider vouches for the address it asserted (see
       // OidcEmailTrust.mjs). Without that, the address must not identify an
-      // existing account: anybody who could set it at the provider would take
-      // that account over.
+      // existing account on its own.
       const trust = emailClaimTrust(profile._json, process.env)
       if (!trust.trusted) {
         logger.warn(
@@ -822,50 +845,193 @@ const AuthenticationController = {
           'OIDC: the provider does not vouch for the email address'
         )
       }
-
-      let user = await UserGetter.promises.getUser({ oidcIdentifier: oidcId })
-      if (!user) {
-        // First login with this OIDC identity. If an account with the same
-        // email already exists, link it to the OIDC identity - but only when
-        // the provider vouches for that address.
-        user = await UserGetter.promises.getUserByAnyEmail(email)
-        if (user && !trust.trusted) {
-          logger.warn(
-            { email, userId: user._id, reason: trust.reason },
-            'OIDC: refusing to link the identity to an existing account'
-          )
-          return done(null, false, {
-            message:
-              'the identity provider did not verify this email address, so it cannot be used to sign in to an existing account',
-          })
-        }
-        if (user) {
-          await UserUpdater.promises.updateUser(user._id, {
-            $set: { oidcIdentifier: oidcId },
-          })
-        } else {
-          user = await UserCreator.promises.createNewUser(
-            {
-              holdingAccount: false,
-              email,
-              first_name: profile.name?.givenName || '',
-              last_name: profile.name?.familyName || profile.username,
-              oidcIdentifier: oidcId,
-              analyticsId: crypto.randomUUID(),
-            },
-            // the identity provider asserted this email address
-            { confirmedAt: new Date() }
-          )
-          return done(null, user)
-        }
+      if (tokens && tokens.idTokenClaims) {
+        logger.debug(
+          { sub: tokens.idTokenClaims.sub, iss: tokens.idTokenClaims.iss },
+          'OIDC: the identity token was verified'
+        )
       }
 
-      return done(
-        null,
-        await AuthenticationController._syncOidcUser(user, profile, trust)
+      const linked = await UserGetter.promises.getUser({
+        oidcIdentifier: oidcId,
+      })
+      if (linked) {
+        // This identity already owns an account: nothing to prove.
+        return done(
+          null,
+          await AuthenticationController._syncOidcUser(linked, profile, trust)
+        )
+      }
+
+      const existing = email
+        ? await UserGetter.promises.getUserByAnyEmail(email)
+        : null
+      if (existing) {
+        if (existing.oidcIdentifier) {
+          logger.warn(
+            { email, userId: existing._id },
+            'OIDC: the account is linked to another single sign-on identity'
+          )
+          return done(null, false, { code: 'oidc-identity-taken' })
+        }
+
+        if (linkMode(process.env) === 'auto') {
+          // The behaviour before the password step existed: link right away,
+          // but only when the provider vouches for the address.
+          if (!trust.trusted) {
+            logger.warn(
+              { email, userId: existing._id, reason: trust.reason },
+              'OIDC: refusing to link the identity to an existing account'
+            )
+            return done(null, false, { code: 'oidc-email-unverified' })
+          }
+          await UserUpdater.promises.updateUser(existing._id, {
+            $set: { oidcIdentifier: oidcId },
+          })
+          logger.info(
+            { email, userId: existing._id },
+            'OIDC: linked the identity to an existing account (OVERLEAF_OIDC_LINK_MODE=auto)'
+          )
+          return done(
+            null,
+            await AuthenticationController._syncOidcUser(
+              existing,
+              profile,
+              trust
+            )
+          )
+        }
+
+        // The address matches an account that is not linked yet. The claim
+        // alone does not prove ownership, so park the identity in the session
+        // and ask for the password of that account before binding it.
+        storeLinkRequest(
+          req,
+          createLinkRequest({
+            oidcId,
+            userId: existing._id,
+            email: existing.email || email,
+          })
+        )
+        logger.info(
+          { email, userId: existing._id },
+          'OIDC: the address belongs to an existing account, asking for its password before linking'
+        )
+        return done(null, false, { code: 'oidc-link-required' })
+      }
+
+      // No account with that address: register one, but only when the provider
+      // vouches for the address (otherwise anybody could park an address that
+      // is not theirs on a new account).
+      if (!trust.trusted) {
+        logger.warn(
+          { email, reason: trust.reason },
+          'OIDC: refusing to create an account for an address the provider does not vouch for'
+        )
+        return done(null, false, { code: 'oidc-email-unverified' })
+      }
+      const created = await UserCreator.promises.createNewUser(
+        {
+          holdingAccount: false,
+          email,
+          first_name: profile.name?.givenName || '',
+          last_name: profile.name?.familyName || profile.username,
+          oidcIdentifier: oidcId,
+          analyticsId: crypto.randomUUID(),
+        },
+        // the identity provider asserted this email address
+        { confirmedAt: new Date() }
       )
+      return done(null, created)
     } catch (error) {
       return done(error)
+    }
+  },
+
+  // The page that asks for the password of the account an OIDC identity is to be
+  // linked to; reached through /login/oidc/callback.
+  oidcLinkPage(req, res) {
+    const request = readLinkRequest(req)
+    if (!request) {
+      return res.redirect('/login?oidc_error=oidc-link-expired')
+    }
+    res.render('user/login-oidc-link', { oidc_link_email: request.email })
+  },
+
+  // Confirms the password of that account and binds the identity to it.
+  async oidcLink(req, res, next) {
+    // The route handler is async and is mounted unwrapped, so nothing may reject
+    // out of it.
+    try {
+      const request = readLinkRequest(req)
+      if (!request) {
+        return res.redirect('/login?oidc_error=oidc-link-expired')
+      }
+
+      const email = String((req.body && req.body.email) || '')
+      const password = String((req.body && req.body.password) || '')
+      if (!email || !password) {
+        return res.redirect('/login/oidc/link?oidc_error=oidc-link-failed')
+      }
+
+      // The normal credential check: it audits the attempt, applies the password
+      // reuse and HIBP checks and answers with the messages a password login
+      // would. The user is not logged in by this call.
+      const { user } = await AuthenticationController._doPassportLogin(
+        req,
+        email,
+        password
+      )
+      if (!user) {
+        logger.warn(
+          { email },
+          'OIDC: the password for the account to link was not accepted'
+        )
+        return res.redirect('/login/oidc/link?oidc_error=oidc-link-failed')
+      }
+
+      const emailEntries = (user.emails || []).map(entry => entry.email)
+      if (
+        !attemptsToLinkAccount(request, {
+          userId: user._id,
+          emails: [...emailEntries, user.email],
+        })
+      ) {
+        logger.warn(
+          { email, userId: user._id },
+          'OIDC: the confirmed credentials belong to another account than the identity was parked for'
+        )
+        clearLinkRequest(req)
+        return res.redirect('/login/oidc/link?oidc_error=oidc-link-failed')
+      }
+
+      if (user.oidcIdentifier && user.oidcIdentifier !== request.oidcId) {
+        logger.warn(
+          { userId: user._id },
+          'OIDC: the account is linked to another single sign-on identity'
+        )
+        clearLinkRequest(req)
+        return res.redirect('/login?oidc_error=oidc-identity-taken')
+      }
+
+      await UserUpdater.promises.updateUser(user._id, {
+        $set: { oidcIdentifier: request.oidcId },
+      })
+      clearLinkRequest(req)
+      logger.info(
+        { userId: user._id, email: user.email },
+        'OIDC: linked an existing account to an OIDC identity after the password was confirmed'
+      )
+
+      AuthenticationController.setAuditInfo(req, {
+        method: 'OIDC login',
+        linkedAccountWithPassword: true,
+      })
+      req.user_info = { auth_provider: 'oidc' }
+      await Modules.promises.hooks.fire('saasLogin', { email: user.email }, req)
+      await AuthenticationController.promises.finishLogin(user, req, res)
+    } catch (err) {
+      return next(err)
     }
   },
 }

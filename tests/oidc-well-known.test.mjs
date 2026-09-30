@@ -148,6 +148,19 @@ test('explicit variables win over the document', () => {
   ])
 })
 
+test('the JWKS URL is taken from the document, which is what makes ID token verification possible', () => {
+  const env = {}
+  const applied = applyDocument(SYNO_DOCUMENT, env)
+  assert.equal(env.OVERLEAF_OIDC_JWKS_URL, SYNO_DOCUMENT.jwks_uri)
+  assert.equal(applied.OVERLEAF_OIDC_JWKS_URL, SYNO_DOCUMENT.jwks_uri)
+
+  // an explicit value wins, and the document is not needed for it
+  const explicit = { OVERLEAF_OIDC_JWKS_URL: 'https://idp.example.com/keys' }
+  const appliedExplicit = applyDocument(SYNO_DOCUMENT, explicit)
+  assert.equal(explicit.OVERLEAF_OIDC_JWKS_URL, 'https://idp.example.com/keys')
+  assert.equal(appliedExplicit.OVERLEAF_OIDC_JWKS_URL, undefined)
+})
+
 test('an incomplete document is rejected, unless the value is configured', () => {
   const incomplete = { ...DOCUMENT }
   delete incomplete.userinfo_endpoint
