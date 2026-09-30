@@ -123,6 +123,7 @@ services:
 | `OVERLEAF_OIDC_CLIENT_SECRET` | 在提供方注册的 Client Secret。 |
 | `OVERLEAF_OIDC_SCOPE` | 请求的 scope（默认 `openid profile email`）。 |
 | `OVERLEAF_OIDC_MATCHING` | 用哪个声明匹配账号：`id`（`sub` 声明，默认）或 `username`（`preferred_username` 声明）。 |
+| `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL` | 设为 `true` 时即使提供方声明 `email_verified: false` 也信任 `email`；设为 `false` 时连「提供方未声明该字段」也不信任。见[行为说明](#行为说明)。 |
 | `OVERLEAF_ENABLE_LOCAL_LOGIN` | 设为 `false` 时隐藏并禁用邮箱/密码登录（默认 `true`）。 |
 | `OVERLEAF_LOGIN_INFO_TEXT` | 显示在登录表单上方的 HTML 内容（默认为 `Welcome to Overleaf! Log in to your account below.`；设为空值则不显示）。 |
 | `OVERLEAF_LOGIN_OIDC_BUTTON` | SSO 按钮文字（默认 `Log in with SSO`）。 |
@@ -154,7 +155,9 @@ OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm/.well-known
 当 `OVERLEAF_OIDC_ISSUER` 以及 `OVERLEAF_OIDC_AUTHORIZATION_URL`、
 `OVERLEAF_OIDC_TOKEN_URL`、`OVERLEAF_OIDC_USERINFO_URL` 都已设置时，**完全不会
 去请求该文档**，这样「全部写死」的配置不依赖提供方在容器启动时可达。否则会以
-递增间隔重试 5 次（合计约 30 秒）。若仍然读不到文档、或文档里缺少所需端点，原因
+递增间隔重试 5 次，并且整个重试过程还有 **60 秒的总预算**——因为它发生在 web 服务
+开始监听之前，提供方不可达时启动最多延迟约一分钟，而不会拖到五次请求超时那么久。
+若仍然读不到文档、或文档里缺少所需端点，原因
 会写入容器日志，**OIDC 登录保持关闭，Overleaf 的其它功能照常工作**——不会因为
 提供方地址写错就让整个站点不可用。另外仍需 `OVERLEAF_OIDC_CLIENT_ID` 与
 `OVERLEAF_OIDC_CLIENT_SECRET`（discovery 文档里没有这两项）；缺少任一项时，
@@ -214,11 +217,17 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
 - 首次登录时按 OIDC 标识查找账号。如果该标识尚未绑定任何账号，则会把提供方
   声明的**邮箱地址**相同的已有账号绑定到该 OIDC 身份；若不存在则创建新账号，
   且邮箱直接视为已验证。
-- 每次登录都会用提供方的声明同步账号的名、姓与邮箱地址。
+- 每次登录都会用提供方的声明同步账号的名与姓；邮箱地址只在提供方为其背书时才
+  会改写（见下一条）。
+- **只有提供方为邮箱背书时，`email` 才会被用来识别账号。** 绑定已有账号、以及
+  改写账号上的邮箱地址，都要求 `email_verified: true`，或者提供方根本没有声明该
+  字段（此时会在日志里写明，因为不少「确实验证了邮箱」的提供方并不返回该字段）。
+  若提供方返回 `email_verified: false`，则对「已存在同邮箱账号」的登录会被拒绝
+  （提示 "the identity provider did not verify this email address ..."），本地
+  邮箱也不会被改写——否则能在提供方侧随意设置邮箱的人就能接管已有账号。可以设
+  `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL: true` 仍然信任这种声明，或设 `false`
+  连未声明的字段也不信任。
 - 由于邮箱由提供方保证，OIDC 用户不会收到「确认邮箱」提示。
-- 按邮箱绑定账号的前提是提供方只声明已验证的邮箱地址。如果你的提供方允许用户
-  随意设置未验证的邮箱，请先在其侧开启邮箱验证，否则用户可以通过挑选邮箱地址
-  接管已有账号。
 - 登录失败（例如用户取消授权）会跳回 `/login`，具体原因写入容器日志
   （`OIDC login failed`）。
 

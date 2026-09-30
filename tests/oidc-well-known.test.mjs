@@ -466,3 +466,48 @@ test('a wrong JSON document is retried and then reported', async () => {
   assert.equal(calls.length, 3)
   assert.deepEqual(slept, [10, 20])
 })
+
+test('the retry loop stops once the time budget is spent', async () => {
+  const failure = () =>
+    Object.assign(new Error('fetch failed'), {
+      cause: Object.assign(
+        new Error('getaddrinfo ENOTFOUND idp.example.com'),
+        { code: 'ENOTFOUND' }
+      ),
+    })
+  const { calls, fetchImpl } = stubFetch([
+    failure(),
+    failure(),
+    failure(),
+    failure(),
+    failure(),
+  ])
+  const { slept, sleep: recordSleep } = recordSleeps()
+  // a clock that only moves with the (stubbed) sleeps
+  let clock = 0
+  const sleep = async ms => {
+    await recordSleep(ms)
+    clock += ms
+  }
+  const now = () => clock
+  const env = {
+    OVERLEAF_OIDC_WELL_KNOWN_URL: 'https://idp.example.com/realms/myrealm',
+  }
+
+  await assert.rejects(
+    applyWellKnownConfiguration({
+      env,
+      fetchImpl,
+      logger,
+      sleep,
+      now,
+      attempts: 5,
+      initialDelayMs: 2000,
+      budgetMs: 5000,
+    }),
+    /ENOTFOUND idp\.example\.com.*gave up after 6s of 5s/
+  )
+  // two attempts (2s + 4s of waiting); the third one would not fit the budget
+  assert.equal(calls.length, 3)
+  assert.deepEqual(slept, [2000, 4000])
+})

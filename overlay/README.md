@@ -72,6 +72,7 @@ docker rm tmp
 | `app/src/Features/Authentication/OidcStrategy.mjs` | **new file**: minimal OIDC strategy on top of `passport-oauth2`; fetches the profile from the userinfo endpoint, resolves the redirect URI per request |
 | `app/src/Features/Authentication/OidcCallbackUrl.mjs` | **new file**: picks the redirect URI for a request (automatic/derived, one URL, or a list of URLs); no imports besides `node:url`, so `tests/oidc-callback-url.test.mjs` can test it on its own |
 | `app/src/Features/Authentication/OidcDiscovery.mjs` | **new file**: reads the provider's discovery document (`OVERLEAF_OIDC_WELL_KNOWN_URL`) and fills the unset `OVERLEAF_OIDC_*` endpoint variables; only imports `node:timers/promises`, tested by `tests/oidc-well-known.test.mjs` |
+| `app/src/Features/Authentication/OidcEmailTrust.mjs` | **new file**: whether the `email` claim may identify an account - it decides whether an existing account is linked and whether the stored address is rewritten (`email_verified`, overridable with `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL`); no imports, tested by `tests/oidc-email-trust.test.mjs` |
 | `app/src/Features/Authentication/AuthenticationController.mjs` | adds `oidcLogin`, `oidcLoginCallback`, `verifyOpenIDConnect`, `extractOidcIdFromProfile`, `ensureOidcLoginEnabled`; extracts `createPassportCallback`; disables local login when `OVERLEAF_ENABLE_LOCAL_LOGIN=false`; `ensureOidcLoginEnabled` accepts the request only when the strategy is registered (`oidcIsConfigured`) |
 | `app/src/infrastructure/Server.mjs` | reads the discovery document when `OVERLEAF_OIDC_WELL_KNOWN_URL` is set and registers the `oidc` passport strategy when the configuration is usable (`oidcIsConfigured`), passing `OVERLEAF_OIDC_CALLBACK_URL(S)` and Overleaf's `behindProxy` setting |
 | `app/src/infrastructure/ExpressLocals.mjs` | exposes the login/OIDC configuration to the views; the SSO button is only offered when the strategy is registered (`oidcIsConfigured`) |
@@ -129,4 +130,11 @@ docker rm tmp
   the issuer, and with it the "OIDC is enabled" flag, may come from the
   document, module-level reads of `process.env.OVERLEAF_OIDC_ISSUER` had to
   become call-time reads (see `Features.mjs`); the other readers already
-  evaluate it per request.
+  evaluate it per request. The retry loop is bounded by a 60-second budget
+  (`budgetMs`) as well, because it runs before the web service starts listening.
+- The `email` claim of a userinfo response only identifies an account - linking
+  an existing one on the first login, and rewriting the address on every login -
+  when the provider vouches for it: `email_verified: true`, or the claim not
+  stated at all (logged). `email_verified: false` refuses the link and keeps the
+  stored address. See `OidcEmailTrust.mjs`; the decision lives in one place so
+  the policy cannot drift between the two call sites.

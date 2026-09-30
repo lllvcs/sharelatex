@@ -130,6 +130,7 @@ services:
 | `OVERLEAF_OIDC_CLIENT_SECRET` | Client secret registered at the provider. |
 | `OVERLEAF_OIDC_SCOPE` | Scopes to request (default `openid profile email`). |
 | `OVERLEAF_OIDC_MATCHING` | Which claim identifies the account, `id` (the `sub` claim, default) or `username` (the `preferred_username` claim). |
+| `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL` | Set to `true` to trust the `email` claim even when the provider reports `email_verified: false`, or `false` to refuse a claim the provider does not state at all. See [Behaviour](#behaviour). |
 | `OVERLEAF_ENABLE_LOCAL_LOGIN` | Set to `false` to hide and disable the email/password login (default `true`). |
 | `OVERLEAF_LOGIN_INFO_TEXT` | HTML rendered above the login form (default `Welcome to Overleaf! Log in to your account below.`; set it to an empty value to show nothing). |
 | `OVERLEAF_LOGIN_OIDC_BUTTON` | Label of the SSO button (default `Log in with SSO`). |
@@ -166,8 +167,11 @@ The document is not fetched at all when the issuer and
 `OVERLEAF_OIDC_AUTHORIZATION_URL`, `OVERLEAF_OIDC_TOKEN_URL` and
 `OVERLEAF_OIDC_USERINFO_URL` are all set, which keeps a fully pinned
 configuration independent of the provider being reachable while the container
-starts. Otherwise the fetch is retried five times with an increasing delay
-(about 30 seconds in total). If the document still cannot be read, or if it
+starts. Otherwise the fetch is retried five times with an increasing delay, and the
+whole loop is bounded by a 60-second budget as well, because it runs before the
+web service starts listening: an unreachable provider delays the boot by about a
+minute at most, instead of by five request timeouts. If the document still
+cannot be read, or if it
 does not carry the endpoints, the reason is written to the container log and
 **OIDC login stays disabled - the rest of Overleaf keeps working**, so a wrong
 provider URL does not take the whole instance down. `OVERLEAF_OIDC_CLIENT_ID`
@@ -236,14 +240,22 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   account is linked yet, an existing account with the same **email address**
   claimed by the provider is linked to the OIDC identity; otherwise a new
   account is created with a confirmed email address.
-- On every login the first name, last name and email address of the account
-  are synchronised with the claims of the provider.
+- On every login the first name and last name of the account are synchronised
+  with the claims of the provider; the email address is only taken over when the
+  provider vouches for it (next point).
+- **The `email` claim identifies an account only when the provider vouches for
+  it.** Linking an existing account, and rewriting the address stored on an
+  account, require `email_verified: true` - or a provider that does not state
+  the claim at all (the login then says so in the log, because providers that
+  verify addresses often leave it out). When the provider answers
+  `email_verified: false`, the login for an account with that address is refused
+  ("the identity provider did not verify this email address ...") and the stored
+  address is left alone, so that a user who can set an arbitrary address at the
+  provider cannot take an account over. Set
+  `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL: true` to trust such a claim anyway, or
+  `false` to refuse a claim the provider does not state.
 - Because the email address is asserted by the provider, the "confirm your
   email" prompts are skipped for OIDC users.
-- Linking by email assumes that the provider only asserts verified email
-  addresses. If your provider allows users to set arbitrary, unverified email
-  addresses, configure it to verify them, otherwise a user could take over an
-  account by choosing its email address.
 - Failed logins (for example when a user cancels the consent screen) send the
   user back to `/login`; the reason is written to the container log
   (`OIDC login failed`).

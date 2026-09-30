@@ -9,6 +9,7 @@ for f in \
   /overleaf/services/web/app/src/Features/Authentication/OidcStrategy.mjs \
   /overleaf/services/web/app/src/Features/Authentication/OidcCallbackUrl.mjs \
   /overleaf/services/web/app/src/Features/Authentication/OidcDiscovery.mjs \
+  /overleaf/services/web/app/src/Features/Authentication/OidcEmailTrust.mjs \
   /overleaf/services/web/app/src/infrastructure/Server.mjs \
   /overleaf/services/web/app/src/infrastructure/Features.mjs \
   /overleaf/services/web/app/src/infrastructure/ExpressLocals.mjs \
@@ -67,6 +68,9 @@ node --test /tests/oidc-callback-url.test.mjs
 
 echo "== the discovery document is applied to the environment =="
 node --test /tests/oidc-well-known.test.mjs
+
+echo "== the email claim is only trusted when the provider vouches for it =="
+node --test /tests/oidc-email-trust.test.mjs
 
 echo "== the views compile =="
 # the Dockerfile regenerates the precompiled views; this makes a failure

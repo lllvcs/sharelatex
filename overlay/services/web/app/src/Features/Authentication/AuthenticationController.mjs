@@ -36,6 +36,7 @@ import { handleAuthenticateErrors } from './AuthenticationErrors.mjs'
 import EmailHelper from '../Helpers/EmailHelper.mjs'
 import SplitTestHandler from '../SplitTests/SplitTestHandler.mjs'
 import { oidcIsConfigured } from './OidcDiscovery.mjs'
+import { emailClaimTrust } from './OidcEmailTrust.mjs'
 
 const { hasAdminAccess } = AdminAuthorizationHelper
 
@@ -740,10 +741,24 @@ const AuthenticationController = {
     })(req, res, next)
   },
 
-  async _syncOidcUser(user, profile) {
+  // `trust` comes from emailClaimTrust(); the default refuses to touch the
+  // address, so a caller that forgets the decision cannot silently start
+  // trusting an unverified claim.
+  async _syncOidcUser(user, profile, trust = { trusted: false }) {
     // A user may change their name or email at the identity provider; keep the
     // local account in sync with the data asserted by the provider.
-    const email = profile.emails?.[0]?.value
+    const assertedEmail = profile.emails?.[0]?.value
+    // The address is only taken over when the provider vouches for it (see
+    // OidcEmailTrust.mjs): an unverified claim would let its owner move an
+    // account - including the address it is reachable at - somewhere they do
+    // not own.
+    const email = trust.trusted ? assertedEmail : null
+    if (assertedEmail && !trust.trusted) {
+      logger.warn(
+        { email: assertedEmail, reason: trust.reason },
+        'OIDC: not syncing the email address, the provider does not vouch for it'
+      )
+    }
     const firstName = profile.name?.givenName ?? user.first_name
     const lastName =
       profile.name?.familyName ?? profile.username ?? user.last_name
@@ -763,6 +778,14 @@ const AuthenticationController = {
     doc.first_name = firstName
     doc.last_name = lastName
     if (email && doc.email !== email) {
+      const owner = await UserGetter.promises.getUserByAnyEmail(email)
+      if (owner && String(owner._id) !== String(doc._id)) {
+        logger.warn(
+          { email, userId: doc._id, ownerId: owner._id },
+          'OIDC: the address asserted by the provider belongs to another account, keeping the current one'
+        )
+        return await doc.save()
+      }
       const primaryEmailEntry = doc.emails.find(e => e.email === doc.email)
       if (primaryEmailEntry) {
         primaryEmailEntry.email = email
@@ -788,14 +811,34 @@ const AuthenticationController = {
     try {
       const oidcId = AuthenticationController.extractOidcIdFromProfile(profile)
       const email = profile.emails[0].value
+      // Whether the provider vouches for the address it asserted (see
+      // OidcEmailTrust.mjs). Without that, the address must not identify an
+      // existing account: anybody who could set it at the provider would take
+      // that account over.
+      const trust = emailClaimTrust(profile._json, process.env)
+      if (!trust.trusted) {
+        logger.warn(
+          { email, reason: trust.reason },
+          'OIDC: the provider does not vouch for the email address'
+        )
+      }
 
       let user = await UserGetter.promises.getUser({ oidcIdentifier: oidcId })
       if (!user) {
         // First login with this OIDC identity. If an account with the same
-        // email already exists, link it to the OIDC identity; the email claim
-        // is asserted by the identity provider, so it can be trusted to
-        // identify the account.
+        // email already exists, link it to the OIDC identity - but only when
+        // the provider vouches for that address.
         user = await UserGetter.promises.getUserByAnyEmail(email)
+        if (user && !trust.trusted) {
+          logger.warn(
+            { email, userId: user._id, reason: trust.reason },
+            'OIDC: refusing to link the identity to an existing account'
+          )
+          return done(null, false, {
+            message:
+              'the identity provider did not verify this email address, so it cannot be used to sign in to an existing account',
+          })
+        }
         if (user) {
           await UserUpdater.promises.updateUser(user._id, {
             $set: { oidcIdentifier: oidcId },
@@ -819,7 +862,7 @@ const AuthenticationController = {
 
       return done(
         null,
-        await AuthenticationController._syncOidcUser(user, profile)
+        await AuthenticationController._syncOidcUser(user, profile, trust)
       )
     } catch (error) {
       return done(error)

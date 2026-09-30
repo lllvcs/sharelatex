@@ -212,6 +212,11 @@ export async function applyWellKnownConfiguration(options = {}) {
     attempts = 5,
     initialDelayMs = 2000,
     timeoutMs = 15000,
+    // Upper bound for the whole retry loop. The discovery runs before the web
+    // service starts listening, so an unreachable provider must not delay the
+    // boot by `attempts` x `timeoutMs`; `now` is injectable for the tests.
+    budgetMs = 60000,
+    now = Date.now,
     sleep = sleepFor,
   } = options
   const warn = logger.warn || (() => {})
@@ -260,15 +265,21 @@ export async function applyWellKnownConfiguration(options = {}) {
 
   const documentUrl = wellKnownDocumentUrl(value)
 
+  const startedAt = now()
   let delay = initialDelayMs
   for (let attempt = 1; ; attempt++) {
     try {
       const document = await fetchDocument(documentUrl, fetchImpl, timeoutMs)
       return applyOrDefault(info, warn, document, env, documentUrl)
     } catch (err) {
-      if (err.permanent || attempt >= attempts) {
+      const elapsedMs = now() - startedAt
+      const outOfBudget = elapsedMs >= budgetMs
+      if (err.permanent || attempt >= attempts || outOfBudget) {
         throw new Error(
-          `could not configure OIDC from ${documentUrl}: ${err.message}`
+          `could not configure OIDC from ${documentUrl}: ${err.message}` +
+            (outOfBudget && attempt < attempts
+              ? ` (gave up after ${Math.round(elapsedMs / 1000)}s of ${Math.round(budgetMs / 1000)}s)`
+              : '')
         )
       }
       warn(
