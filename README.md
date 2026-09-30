@@ -323,17 +323,21 @@ above.
 | Workflow | Trigger | Publishes to |
 | --- | --- | --- |
 | `build-test.yml` | pull requests to `master`, manual | – (builds and runs the tests) |
-| `build-push-docker.yml` | release published, manual | `lvcs/sharelatex` on Docker Hub |
-| `build-push-ghcr.yml` | release published, manual | `ghcr.io/<owner>/<repo>` (GitHub Packages) |
+| `docker-build.yml` | release published, manual | `ghcr.io/<owner>/<repo>` under `<channel>-<short-hash>` (the hand-off image) |
+| `docker-publish.yml` | manual | copies that image to `lvcs/sharelatex` on Docker Hub and moves `latest`/`<channel>`/`<version>` on both registries |
 
 - **Docker Hub**: create the repository and add the secrets `DOCKER_USER` and
   `DOCKER_PASSWORD` (a Docker Hub access token) in
   *Settings → Secrets and variables → Actions*.
 - **GitHub Packages**: no secret is needed, the workflow uses the built-in
   `GITHUB_TOKEN`.
-- **Trigger a build**: publish a release (which also produces versioned tags
-  plus `latest`), or start a workflow manually from the *Actions* tab
-  (*Run workflow*), which tags the image after the selected branch.
+- **Build, then publish**: `docker-build.yml` compiles the image **once** and stores
+  it in GHCR under an immutable `<channel>-<short-hash>` tag (a cold build takes tens
+  of minutes). `docker-publish.yml` copies that image registry-to-registry to Docker
+  Hub and moves the `latest`/`<channel>`/`<version>` tags — seconds, never a rebuild.
+  Publish a release to start a build automatically, or run either workflow manually
+  from the *Actions* tab (*Run workflow*). Both registries get the image signed with
+  cosign by the publish workflow.
 
 ### Local build
 

@@ -1,0 +1,277 @@
+name: Publish Docker Image
+
+# Publish step, manual only: copies the image built by "Build Docker Image" to
+# Docker Hub and moves the moving tags (`latest`, the channel and the version) on
+# both registries. The copy is registry-to-registry, so it takes seconds and never
+# rebuilds the multi-gigabyte image.
+#
+# The image is signed with cosign in each registry it lands in: `docker buildx
+# imagetools create` copies the manifest and its blobs but not the signature.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-tag:
+        description: 'GHCR tag to publish. Defaults to the newest successful build.'
+        type: string
+        required: false
+      version:
+        description: 'Version to tag as well (optional, e.g. 1.2.3)'
+        type: string
+        required: false
+      dockerhub:
+        description: 'Also publish to Docker Hub'
+        type: boolean
+        default: true
+      moving-tags:
+        description: 'Move `latest` and `<channel>` tags to this build'
+        type: boolean
+        default: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DOCKERHUB_REPOSITORY: sharelatex
+
+# Never run two publishes at once: they would race on the same moving tags.
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+  # cosign uses the workflow's identity token to reach Fulcio.
+  id-token: write
+  # Reading the artifact produced by the build workflow.
+  actions: read
+
+jobs:
+  prepare:
+    name: Resolve image to publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source-tag: ${{ steps.prepare.outputs.source-tag }}
+      channel: ${{ steps.prepare.outputs.channel }}
+      version: ${{ steps.prepare.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Resolve source tag
+        id: prepare
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.source-tag }}
+          INPUT_VERSION: ${{ inputs.version }}
+          DOCKERHUB_ENABLED: ${{ inputs.dockerhub }}
+          # Only booleans, never the secret values themselves: a job output whose
+          # value collides with a secret value is dropped by GitHub, and the secret
+          # is not needed to validate the configuration here anyway.
+          DOCKERHUB_HAS_USER: ${{ secrets.DOCKER_USER != '' }}
+          DOCKERHUB_HAS_PASSWORD: ${{ secrets.DOCKER_PASSWORD != '' }}
+          IMAGE_NAMESPACE: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          if [ "${DOCKERHUB_ENABLED}" = "true" ] && { [ "${DOCKERHUB_HAS_USER}" != "true" ] || [ "${DOCKERHUB_HAS_PASSWORD}" != "true" ]; }; then
+            echo "::error::Docker Hub publishing is enabled but the 'DOCKER_USER' and/or 'DOCKER_PASSWORD' repository secrets are empty. Add them under Settings → Secrets and variables → Actions, or untick the 'dockerhub' input."
+            exit 1
+          fi
+
+          version="${INPUT_VERSION}"
+          if [ -n "${INPUT_TAG}" ]; then
+            source_tag="${INPUT_TAG}"
+          else
+            run_id=$(gh run list --workflow=docker-build.yml --status=success --limit=1 --json databaseId --jq '.[0].databaseId')
+            if [ -z "${run_id}" ] || [ "${run_id}" = "null" ]; then
+              echo "::error::No successful 'Build Docker Image' run found. Run that workflow first, or pass a 'source-tag' explicitly."
+              exit 1
+            fi
+            meta_dir=$(mktemp -d)
+            gh run download "${run_id}" --name image-meta --dir "${meta_dir}"
+            meta_file=$(find "${meta_dir}" -name 'image-meta.json' | head -n 1)
+            if [ -z "${meta_file}" ]; then
+              echo "::error::The newest build run (${run_id}) has no image metadata artifact."
+              exit 1
+            fi
+            source_tag=$(node -p "JSON.parse(require('node:fs').readFileSync('${meta_file}', 'utf8')).tag")
+            if [ -z "${version}" ]; then
+              version=$(node -p "JSON.parse(require('node:fs').readFileSync('${meta_file}', 'utf8')).version ?? ''")
+            fi
+            echo "Using the image from build run ${run_id}."
+          fi
+
+          # `<channel>-<short-hash>` is what the build workflow pushes; anything
+          # else (a version tag, a hand-made tag) has no channel of its own.
+          candidate="${source_tag%-*}"
+          case "${candidate}" in
+            canary | beta | stable) channel="${candidate}" ;;
+            *) channel="" ;;
+          esac
+
+          echo "source-tag=${source_tag}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          {
+            echo "Publishing \`${REGISTRY}/${IMAGE_NAME}:${source_tag}\`"
+            echo ""
+            echo "- channel tag: \`${channel:-none}\`"
+            echo "- version tag: \`${version:-none}\`"
+            echo "- docker hub: ${{ inputs.dockerhub }}"
+            echo "- moving tags: ${{ inputs.moving-tags }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: Copy and tag
+    needs:
+      - prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+      - name: Login to Docker Hub
+        # The namespace is read straight from the secret here: a job output that
+        # contains a secret arrives empty, which used to skip this step silently.
+        if: ${{ inputs.dockerhub }}
+        shell: bash
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKER_USER }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOCKERHUB_USER}" ] || [ -z "${DOCKERHUB_PASSWORD}" ]; then
+            echo "::error::Docker Hub publishing is enabled but the 'DOCKER_USER' and/or 'DOCKER_PASSWORD' repository secrets are empty. Add them under Settings → Secrets and variables → Actions, or untick the 'dockerhub' input."
+            exit 1
+          fi
+          echo "${DOCKERHUB_PASSWORD}" | docker login docker.io --username "${DOCKERHUB_USER}" --password-stdin
+          echo "DOCKERHUB_NAMESPACE=${DOCKERHUB_USER}" >> "$GITHUB_ENV"
+      - name: Publish
+        shell: bash
+        env:
+          SOURCE_TAG: ${{ needs.prepare.outputs.source-tag }}
+          CHANNEL: ${{ needs.prepare.outputs.channel }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          MOVING_TAGS: ${{ inputs.moving-tags }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read from the context, not from a job output: the owner name would be
+          # dropped whenever it happens to equal a secret value.
+          IMAGE_NAMESPACE: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          # GitHub always sets these (possibly empty); normalise anyway so an
+          # unset variable cannot trip `set -u` in the middle of a publish.
+          SOURCE_TAG="${SOURCE_TAG:-}"
+          CHANNEL="${CHANNEL:-}"
+          VERSION="${VERSION:-}"
+          MOVING_TAGS="${MOVING_TAGS:-false}"
+
+          ghcr_image="${REGISTRY}/${IMAGE_NAME}"
+          source="${ghcr_image}:${SOURCE_TAG}"
+
+          # A registry also stores cosign artifacts next to the image
+          # (`sha256-<digest>.sig`, `.att`, `.sbom`). Tagging one of those as
+          # `latest` would hand out something that is not an image.
+          case "${SOURCE_TAG}" in
+            sha256-* | *.sig | *.att | *.sbom)
+              echo "::error::'${SOURCE_TAG}' is a cosign signature or attestation artifact, not an image tag. Pass an image tag instead (the build summary lists them)."
+              exit 1
+              ;;
+          esac
+
+          if ! docker buildx imagetools inspect "${source}" >/dev/null 2>&1; then
+            echo "::error::Source image '${source}' does not exist in GHCR."
+            echo "Image tags available in ${ghcr_image}:"
+            gh api "/users/${IMAGE_NAMESPACE}/packages/container/${IMAGE_NAME#*/}/versions" \
+              --jq '.[].metadata.container.tags[]' 2>/dev/null \
+              | grep -v -E '\.(sig|att|sbom)$' | sed 's/^/  - /' || true
+            exit 1
+          fi
+
+          # Belt and braces: check the manifest itself. Only image manifests and
+          # image indexes may be copied and tagged.
+          media_type=$(docker buildx imagetools inspect --raw "${source}" 2>/dev/null \
+            | node -e '
+              let raw = "";
+              process.stdin
+                .on("data", (chunk) => (raw += chunk))
+                .on("end", () => {
+                  let type = "";
+                  try {
+                    type = JSON.parse(raw).mediaType || "";
+                  } catch {
+                    type = "";
+                  }
+                  process.stdout.write(type || "unknown");
+                });
+            ')
+          case "${media_type}" in
+            application/vnd.oci.image.index* | application/vnd.oci.image.manifest* | \
+              application/vnd.docker.distribution.manifest.list* | \
+              application/vnd.docker.distribution.manifest.v2*)
+              ;;
+            unknown)
+              echo "::warning::Could not read the media type of ${source}; continuing."
+              ;;
+            *)
+              echo "::error::'${source}' is a '${media_type}', not an image manifest — refusing to publish or tag it."
+              exit 1
+              ;;
+          esac
+
+          images=("${ghcr_image}")
+          if [ -n "${DOCKERHUB_NAMESPACE:-}" ]; then
+            images+=("docker.io/${DOCKERHUB_NAMESPACE}/${DOCKERHUB_REPOSITORY}")
+          fi
+
+          published=()
+          for image in "${images[@]}"; do
+            tag_args=()
+            # The GHCR copy already carries the immutable tag; Docker Hub needs it.
+            if [ "${image}" != "${ghcr_image}" ]; then
+              tag_args+=(--tag "${image}:${SOURCE_TAG}")
+            fi
+            if [ "${MOVING_TAGS}" = "true" ]; then
+              tag_args+=(--tag "${image}:latest")
+              if [ -n "${CHANNEL}" ]; then
+                tag_args+=(--tag "${image}:${CHANNEL}")
+              fi
+              if [ -n "${VERSION}" ]; then
+                tag_args+=(--tag "${image}:${VERSION}")
+              fi
+            fi
+            if [ "${#tag_args[@]}" -eq 0 ]; then
+              continue
+            fi
+
+            docker buildx imagetools create "${tag_args[@]}" "${source}"
+            for ((index = 0; index < ${#tag_args[@]}; index += 2)); do
+              published+=("${tag_args[index + 1]}")
+            done
+
+            # Sign what landed here: imagetools copies the manifest and its blobs,
+            # but not the signature, so each registry gets its own.
+            reference="${image}:${SOURCE_TAG}"
+            digest=$(docker buildx imagetools inspect --format '{{.Manifest.Digest}}' "${reference}")
+            cosign sign --yes "${reference}@${digest}"
+          done
+
+          {
+            echo ""
+            echo "### Published"
+            echo ""
+            echo '```'
+            printf '%s\n' "${published[@]}"
+            echo '```'
+            echo ""
+            echo "The \`sha256-<digest>.sig\` entries that the registry lists next to these are cosign signatures, not images."
+          } >> "$GITHUB_STEP_SUMMARY"

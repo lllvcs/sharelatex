@@ -286,14 +286,18 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 | Workflow | 触发条件 | 推送目标 |
 | --- | --- | --- |
 | `build-test.yml` | 向 `master` 提交 pull request、手动触发 | –（构建并运行测试） |
-| `build-push-docker.yml` | 发布 release、手动触发 | Docker Hub 的 `lvcs/sharelatex` |
-| `build-push-ghcr.yml` | 发布 release、手动触发 | GitHub Packages 的 `ghcr.io/<owner>/<repo>` |
+| `docker-build.yml` | 发布 release、手动触发 | GitHub Packages 的 `ghcr.io/<owner>/<repo>`，标签为 `<channel>-<短哈希>`（交接用的镜像） |
+| `docker-publish.yml` | 手动触发 | 把上面的镜像复制到 Docker Hub 的 `lvcs/sharelatex`，并在两个 registry 上移动 `latest`/`<channel>`/`<version>` 标签 |
 
 - **Docker Hub**：先创建仓库，然后在 *Settings → Secrets and variables →
   Actions* 中添加 `DOCKER_USER` 与 `DOCKER_PASSWORD`（Docker Hub 访问令牌）。
 - **GitHub Packages**：无需任何 secret，workflow 使用内置的 `GITHUB_TOKEN`。
-- **触发构建**：发布一个 release（会同时生成版本号标签与 `latest`），或在
-  *Actions* 页面手动运行 workflow（镜像会以所选分支名作为标签）。
+- **先构建、后发布**：`docker-build.yml` 只把镜像**构建一次**并推送到 GHCR，标签
+  为不可变的 `<channel>-<短哈希>`（冷构建需要几十分钟）；`docker-publish.yml` 把
+  这个镜像在 registry 之间直接复制到 Docker Hub，并移动
+  `latest`/`<channel>`/`<version>` 标签——耗时数秒，不会重新构建。发布 release 会
+  自动触发构建，也可以在 *Actions* 页面手动运行任意一个 workflow。两个 registry 上
+  的镜像都会由发布会话用 cosign 签名。
 
 ### 本地构建
 
