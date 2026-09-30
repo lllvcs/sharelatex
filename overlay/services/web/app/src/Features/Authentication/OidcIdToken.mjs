@@ -130,6 +130,14 @@ function signatureMatches({ algorithm, jwk, signingInput, signature }) {
   )
 }
 
+// OpenID Connect compares the issuer as a string, and a trailing slash is the
+// one difference that carries no meaning: a provider that publishes
+// `https://idp.example.com/sso` and an administrator who typed
+// `https://idp.example.com/sso/` would otherwise never get a login through.
+export function normaliseIssuer(value) {
+  return String(value == null ? '' : value).replace(/\/+$/, '')
+}
+
 function audienceMatches(aud, clientId) {
   if (Array.isArray(aud)) {
     return aud.includes(clientId)
@@ -184,7 +192,10 @@ export function verifyClaims(
     throw new Error('the identity token signature does not verify')
   }
 
-  if (issuer && claims.iss !== issuer) {
+  if (typeof claims.iss !== 'string' || claims.iss === '') {
+    throw new Error('the identity token carries no iss claim')
+  }
+  if (issuer && normaliseIssuer(claims.iss) !== normaliseIssuer(issuer)) {
     throw new Error(
       `the identity token was issued by '${claims.iss}', expected '${issuer}'`
     )

@@ -119,7 +119,7 @@ services:
 
 | Variable | Description |
 | --- | --- |
-| `OVERLEAF_OIDC_ISSUER` | Issuer URL of the provider. OIDC login is disabled while this is unset. |
+| `OVERLEAF_OIDC_ISSUER` | Issuer URL of the provider (a trailing slash is ignored when it is compared with the `iss` of the identity token). OIDC login is disabled while this is unset. |
 | `OVERLEAF_OIDC_WELL_KNOWN_URL` | Discovery document of the provider, or just the issuer - the endpoints below are then read from it, see [Discovery](#discovery-one-click-configuration). |
 | `OVERLEAF_OIDC_AUTHORIZATION_URL` | Authorization endpoint used to start the login flow. |
 | `OVERLEAF_OIDC_TOKEN_URL` | Token endpoint used to exchange the authorization code. |
@@ -173,7 +173,10 @@ configuration independent of the provider being reachable while the container
 starts. Otherwise the fetch is retried five times with an increasing delay, and the
 whole loop is bounded by a 60-second budget as well, because it runs before the
 web service starts listening: an unreachable provider delays the boot by about a
-minute at most, instead of by five request timeouts. If the document still
+minute at most, instead of by five request timeouts. A wrong URL, on the other
+hand, is reported at once: providers such as Synology's SSO server answer an
+unknown path with their web page, and an HTML answer is logged as a wrong URL
+instead of being retried (the same goes for any HTTP 4xx). If the document still
 cannot be read, or if it
 does not carry the endpoints, the reason is written to the container log and
 **OIDC login stays disabled - the rest of Overleaf keeps working**, so a wrong

@@ -101,6 +101,42 @@ function recordSleeps() {
 
 const logger = { info() {}, warn() {}, err() {} }
 
+test('a value that stops at /.well-known still names the document', () => {
+  assert.equal(
+    wellKnownDocumentUrl('https://idp.example.com/webman/sso/.well-known'),
+    'https://idp.example.com/webman/sso/.well-known/openid-configuration'
+  )
+  assert.equal(
+    wellKnownDocumentUrl('https://idp.example.com/webman/sso/.well-known/'),
+    'https://idp.example.com/webman/sso/.well-known/openid-configuration'
+  )
+})
+
+test('a provider that answers with HTML fails at once instead of retrying', async () => {
+  // Synology-style providers answer an unknown path with their web page, which
+  // is a wrong URL, not a hiccup.
+  const html = () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => 'text/html; charset=utf-8' },
+    json: async () => {
+      throw new Error('Unexpected token <')
+    },
+  })
+  const { calls, fetchImpl } = stubFetch([html(), html(), html(), html(), html()])
+  const { slept, sleep } = recordSleeps()
+  const env = {
+    OVERLEAF_OIDC_WELL_KNOWN_URL: 'https://idp.example.com/wrong-path',
+  }
+
+  await assert.rejects(
+    applyWellKnownConfiguration({ env, fetchImpl, logger, sleep }),
+    /usually means the URL is wrong/
+  )
+  assert.equal(calls.length, 1)
+  assert.deepEqual(slept, [])
+})
+
 test('the discovery document URL is derived from the issuer', () => {
   assert.equal(
     wellKnownDocumentUrl('https://idp.example.com/realms/myrealm'),

@@ -30,11 +30,12 @@ if (!modulePath) {
 }
 
 const {
+  createJwksCache,
   ecSignatureToDer,
+  normaliseIssuer,
   parseIdToken,
   verifyClaims,
   verifyIdToken,
-  createJwksCache,
 } = await import(pathToFileURL(modulePath).href)
 
 const ISSUER = 'https://idp.example.com/realms/myrealm'
@@ -172,6 +173,36 @@ test('an ES256 token verifies (raw signature converted to DER)', async () => {
     now: NOW,
   })
   assert.equal(verified.sub, 'user-1')
+})
+
+test('a trailing slash on the issuer is the only difference ignored', async () => {
+  const key = rsaKey('key-1')
+  const token = sign({ key, header: { alg: 'RS256', kid: 'key-1' }, claims: claims() })
+
+  for (const issuer of [ISSUER, `${ISSUER}/`, `${ISSUER}//`]) {
+    const verified = await verifyIdToken(token, {
+      issuer,
+      clientId: CLIENT_ID,
+      keys: [key.jwk],
+      now: NOW,
+    })
+    assert.equal(verified.sub, 'user-1')
+  }
+
+  assert.equal(normaliseIssuer('https://idp.example.com/sso/'), 'https://idp.example.com/sso')
+  assert.equal(normaliseIssuer(undefined), '')
+  assert.equal(normaliseIssuer(null), '')
+
+  const withoutIssuer = claims()
+  delete withoutIssuer.iss
+  await assert.rejects(
+    verifyIdToken(sign({ key, header: { alg: 'RS256', kid: 'key-1' }, claims: withoutIssuer }), {
+      issuer: ISSUER,
+      keys: [key.jwk],
+      now: NOW,
+    }),
+    /no iss claim/
+  )
 })
 
 test('the issuer and the audience have to match', async () => {

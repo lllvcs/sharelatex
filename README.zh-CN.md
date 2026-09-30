@@ -112,7 +112,7 @@ services:
 
 | 变量 | 说明 |
 | --- | --- |
-| `OVERLEAF_OIDC_ISSUER` | 提供方的 Issuer 地址，未设置时 OIDC 登录保持关闭。 |
+| `OVERLEAF_OIDC_ISSUER` | 提供方的 Issuer 地址（与 identity token 的 `iss` 比较时会忽略结尾的斜杠）。未设置时 OIDC 登录保持关闭。 |
 | `OVERLEAF_OIDC_WELL_KNOWN_URL` | 提供方的 discovery 文档地址，或直接填 Issuer 地址——下方各端点将从该文档读取，见 [Discovery](#discovery一键配置)。 |
 | `OVERLEAF_OIDC_AUTHORIZATION_URL` | 发起登录流程的授权端点。 |
 | `OVERLEAF_OIDC_TOKEN_URL` | 用于交换授权码的令牌端点。 |
@@ -160,6 +160,9 @@ OVERLEAF_OIDC_WELL_KNOWN_URL: https://idp.example.com/realms/myrealm/.well-known
 去请求该文档**，这样「全部写死」的配置不依赖提供方在容器启动时可达。否则会以
 递增间隔重试 5 次，并且整个重试过程还有 **60 秒的总预算**——因为它发生在 web 服务
 开始监听之前，提供方不可达时启动最多延迟约一分钟，而不会拖到五次请求超时那么久。
+反过来，**URL 写错会立即报错**：群晖 SSO Server 这类提供方对不存在的路径会返回它的
+网页（HTTP 200 + HTML），日志里会直接写明「the endpoint answered with 'text/html',
+which usually means the URL is wrong」而不去重试；HTTP 4xx 同样不重试。
 若仍然读不到文档、或文档里缺少所需端点，原因
 会写入容器日志，**OIDC 登录保持关闭，Overleaf 的其它功能照常工作**——不会因为
 提供方地址写错就让整个站点不可用。另外仍需 `OVERLEAF_OIDC_CLIENT_ID` 与

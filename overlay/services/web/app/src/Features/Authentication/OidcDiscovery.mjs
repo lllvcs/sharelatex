@@ -43,10 +43,15 @@ const REQUIRED_VARIABLES = [
 
 export function wellKnownDocumentUrl(value) {
   const url = String(value).trim()
-  if (url.includes('/.well-known/')) {
+  const stopsAtWellKnown = /\/\.well-known\/?$/.test(url)
+  if (url.includes('/.well-known/') && !stopsAtWellKnown) {
     return url
   }
-  return url.replace(/\/+$/, '') + WELL_KNOWN_PATH
+  // A value that stops at the well-known directory still names the document.
+  const documentPath = stopsAtWellKnown
+    ? '/openid-configuration'
+    : WELL_KNOWN_PATH
+  return url.replace(/\/+$/, '') + documentPath
 }
 
 // Endpoints that are neither configured nor taken from the document so far.
@@ -86,6 +91,13 @@ export function oidcIsConfigured(env) {
 
 function isFilled(value) {
   return typeof value === 'string' && value !== ''
+}
+
+// Providers answer an unknown path with their web page rather than a 404, so an
+// HTML body on a discovery URL means the URL is wrong. That is a configuration
+// mistake, not a hiccup: retrying it only delays the start of the service.
+function looksLikeHtml(contentType) {
+  return /html/i.test(contentType)
 }
 
 // The scopes to request: the default is "openid profile email", and a provider
@@ -204,10 +216,24 @@ async function fetchDocument(url, fetchImpl, timeoutMs) {
     }
     throw err
   }
+  const contentType =
+    response.headers && typeof response.headers.get === 'function'
+      ? response.headers.get('content-type') || ''
+      : ''
   try {
     return await response.json()
   } catch (err) {
-    throw new Error(`the response is not valid JSON: ${err.message}`)
+    const html = looksLikeHtml(contentType)
+    const error = new Error(
+      `the response is not valid JSON: ${err.message}` +
+        (html
+          ? ` (the endpoint answered with '${contentType}', which usually means the URL is wrong)`
+          : '')
+    )
+    if (html) {
+      error.permanent = true
+    }
+    throw error
   }
 }
 
