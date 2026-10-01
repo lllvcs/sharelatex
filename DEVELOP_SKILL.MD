@@ -1,10 +1,15 @@
-# Overleaf CE (sharelatex) OIDC fork — development notes
+---
+name: overleaf-oidc-fork
+description: Use when developing on the Overleaf CE (sharelatex) OIDC fork — touching overlay/, debugging a login flow, or bumping the upstream release. Rules with their reason and verification step; the incident history lives in DEVELOP_EXPERIMENT.MD.
+---
+
+# Overleaf CE (sharelatex) OIDC fork — development rules (agent-facing)
 
 > **When to use this file.** Before touching anything under `overlay/`, when an
 > OIDC login flow misbehaves, or when bumping the upstream Overleaf release.
-> Deployment and configuration *usage* live in [`README.md`](./README.md); this
-> file is the working knowledge — how the overlay works, what it costs, the
-> security rules the integration depends on, and how to verify a change.
+> Deployment and configuration *usage* live in [`README.md`](./README.md); the
+> record behind these rules lives in
+> [`DEVELOP_EXPERIMENT.MD`](./DEVELOP_EXPERIMENT.MD).
 >
 > Written as rules: **do X → because Y → verify with Z.** Read the one you need.
 
