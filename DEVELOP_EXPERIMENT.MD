@@ -585,9 +585,9 @@ it breaks.
 The image had never been built from a cold cache when this round started, so
 neither `tests/verify-overlay.sh` nor `tests/compile.sh` had ever run - the last
 green CI was months old and predated most of the tests. Building it locally and
-running both turned up nine defects, none of which any amount of reading had
-found. They are listed here because the pattern is the point: seven of the nine
-were in the *tests*, and all seven passed for the wrong reason or would have
+running both turned up ten defects, none of which any amount of reading had
+found. They are listed here because the pattern is the point: eight of the ten
+were in the *tests*, and all eight passed for the wrong reason or would have
 failed on a correct image.
 
 | What was wrong | How it showed | Why it had survived |
@@ -601,6 +601,7 @@ failed on a correct image.
 | it also imported clsi's `DockerRunner` with the feature off, where `clsi.docker` does not exist | `Cannot read properties of undefined (reading 'maxContainerAge')` | same |
 | it compared the latexmk rc against strings with a different spacing than the file uses | `add_cus_dep( 'glo'...` "missing" from a correct file | same |
 | `compile.sh` compiled knitr's generated `main-concordance.tex` on the second run | the first run left it behind and the second failed | only visible when run twice |
+| `compile.sh` compiled the shell-escape example's generated `subdir/content.tex` on the second run, without that example's latexmkrc | `Missing \begin{document}` on the second run | same - and the first version of the exclusion was written for exactly this class of file, one round later |
 
 Two behaviours are worth recording as *properties of the product*, found the same
 way and now written down where a user would look for them:
