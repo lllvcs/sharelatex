@@ -208,16 +208,17 @@ webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以�
 才会存在。
 
 **它解锁了什么。** 凡是 UI 属于注册表键或页面入口的功能，都可以靠「加上它的模块和它的
-注册表键」变为可用——AI 助手、错误助手、管理面板、模板库、Git 集成。在那之前有两点
-需要知道：
+注册表键」变为可用——AI 助手、错误助手、管理面板、模板库、Git 集成。机制一旦验证通过，
+其中的前三个就被移植了；§3.3 记录了各自的实际代价，包括移植前就看得见的两个障碍——它们
+后来都被证明很小：
 
 - AI 助手还额外需要 `modules/workbench`，它从 `@ai-sdk/openai-compatible` import
   `createOpenAICompatible`——这个包镜像只在 lockfile 里有，所以 PnP 会拒绝它，web 服务
-  根本起不来。需要替换一行（改用已声明的 `@ai-sdk/openai` 里的 `createOpenAI`），之后
-  该功能还需要 `AI_ENABLED`、`AI_BASE_URL`、`AI_API_KEY` 才能真正做事；
-- 管理面板不能像现在这样占用 `/admin/user`：基础镜像的 `user-activate` 模块已经注册了
-  该路径并把它重定向到 `/admin/register`，而模块序列只能往后追加，所以
-  `user-activate` 赢。
+  根本起不来。只需替换一处 import（改用已声明的 `@ai-sdk/openai` 里的 `createOpenAI`），
+  之后该功能还需要 `AI_ENABLED`、`AI_BASE_URL`、`AI_API_KEY` 才能真正做事；
+- 管理面板与基础镜像的 `user-activate` 注册的是同样两条路径，而先注册者胜，所以模块
+  序列需要的是**插入**而不是追加——见 `overlay/etc/overleaf/overlay-modules.cjs` 里的
+  `MODULE_PLACEMENT`。
 
 ### 3.3 这次解锁之后移植了什么
 

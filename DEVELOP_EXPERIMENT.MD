@@ -278,17 +278,20 @@ moves; and a module whose UI is rebuilt in must still have its backend listed in
 **What it unblocks.** Every feature whose UI is a registry entry or a page
 entrypoint becomes reachable by adding its module and its registry key - the AI
 assistant, the error assistant, the admin panel, the template gallery, the Git
-integrations. Two things to know before that:
+integrations. The first three of those were ported once the mechanism was proved;
+§3.3 records what each one cost, including the two obstacles that were visible
+before the port and turned out to be small:
 
-- the AI assistant additionally needs `modules/workbench`, which imports
+- the AI assistant also needs `modules/workbench`, which imports
   `createOpenAICompatible` from `@ai-sdk/openai-compatible` - a package the image
   has only in its lockfile, so PnP refuses it and the web service does not boot.
-  One line needs replacing (`createOpenAI` from the declared `@ai-sdk/openai`), and
-  the feature then needs `AI_ENABLED`, `AI_BASE_URL`, `AI_API_KEY` to do anything;
-- the admin panel cannot own `/admin/user` as it is: the base image's
-  `user-activate` module already registers that path and redirects it to
-  `/admin/register`, and because the module sequence can only be appended to,
-  `user-activate` wins.
+  One import is substituted (`createOpenAI` from the declared `@ai-sdk/openai`)
+  and the feature then needs `AI_ENABLED`, `AI_BASE_URL` and `AI_API_KEY` to do
+  anything;
+- the admin panel and the base image's `user-activate` register the same two
+  paths, and the first registration wins, so the sequence needs an insertion
+  rather than an append - see `MODULE_PLACEMENT` in
+  `overlay/etc/overleaf/overlay-modules.cjs`.
 
 ### 3.3 Porting what that unblocked
 
