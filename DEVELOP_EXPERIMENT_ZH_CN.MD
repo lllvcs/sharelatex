@@ -148,6 +148,63 @@ overlay 的假设里有五条是拿**已发布镜像**（而不是源码树）�
 最后一行正是这次下载镜像去做检查的价值所在：这是一个只有在真实部署里、挂载了 socket、
 真正跑一次编译时才会暴露的失败。
 
+### 3.2 重建前端（可选步骤）
+
+上面的核对留下了一个悬而未决的问题：如果源码都在、只是工具链被裁掉了，重建到底能不能
+成功？答案现在已经作为一条可选构建步骤进了仓库，并用「能证明这件事的最小功能」做了
+验证。
+
+**为什么选 `symbol-palette`。** 它的 `index.mjs` 只有四行：打一行日志、导出一个空对象
+——没有路由、没有钩子、没有设置。这个功能*本身*全在它的前端里，通过一个注册表键
+（`sourceEditorSymbolPalette`，由核心的 `symbol-palette-pane.tsx` 渲染）挂进去。因此
+它是唯一一个「整体效果就等于证明注册表与打包产物一致」的模块——而它的依赖只有已声明的
+软件包（`react`、`react-i18next`、`match-sorter`、`prop-types`，都是 `yarn install`
+会恢复的 devDependencies），外加五个上游本来就有的 `@/` 核心前端文件。除此之外什么都
+不需要移植。
+
+**这一步做了什么**，在 `Dockerfile` 里，由
+`--build-arg OVERLEAF_REBUILD_FRONTEND=true` 打开：
+
+1. `yarn install --immutable` 恢复被裁掉的 devDependencies。镜像里的 yarn 缓存含有其中
+   大部分，而构建过程可以联网，所以这是三步里风险最低的一步。
+2. `OVERLEAF_CONFIG=…/config/settings.frontend.cjs yarn run webpack:production`
+   用填好的注册表编译前端。这个设置文件*不是*运行时的那一个：宏只在 webpack 启动时读
+   一次 `@overleaf/settings`。
+3. `yarn workspaces focus --all --production` 再把 devDependencies 裁掉，因此跑起来的
+   镜像和之前完全一样——这也正是上游自己的构建所做的。
+
+**那个坑，也是这个设置文件存在的唯一理由。** 不带 `OVERLEAF_CONFIG` 跑 webpack，它会去
+读镜像自己的 `services/web/config/settings.defaults.js`，而那份文件里除了三个
+`full-project-search` 的键之外，每个键的注册表都是 `[]`。结果是**逐字节等价**的空打包
+产物，**而构建仍然是绿的**。这正是要针对设计的失败模式，所以校验检查的是*产物*，而不是
+命令：
+
+- `tests/verify-overlay.sh` 在 `public/js` 里找该模块的组件（找的是它的一个 CSS 类名，
+  而 CSS 是抽到别处去的，所以能找到就说明该模块的 JavaScript 被打进去了），并检查重建
+  后的 manifest 里核心入口仍然在——这两个错误的方向正好相反。
+- `tests/frontend-rebuild.test.mjs` 检查设置文件本身：核心前端所问的那个键、路径能解析、
+  路径写成相对形式（这样它被复制到 `/overleaf/services/web` 之后依然有效），以及镜像
+  校验所 grep 的那个字符串仍在组件里。
+- `.github/workflows/build-test.yml` 是**带这个参数**构建的，所以 CI 才是证明整条路径
+  可用的地方。`docker-build.yml` 不带，因此在有人刻意打开之前，发布的镜像保持不变。
+
+**它的代价**，以及为什么不做默认：镜像构建多出一次 `yarn install` 和一次生产模式的
+webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以基础镜像一动就必须重新生成；
+而且一个 UI 被重建进去的模块，其后端仍然必须列在 `moduleImportSequence` 里，它的路由
+才会存在。
+
+**它解锁了什么。** 凡是 UI 属于注册表键或页面入口的功能，都可以靠「加上它的模块和它的
+注册表键」变为可用——AI 助手、错误助手、管理面板、模板库、Git 集成。在那之前有两点
+需要知道：
+
+- AI 助手还额外需要 `modules/workbench`，它从 `@ai-sdk/openai-compatible` import
+  `createOpenAICompatible`——这个包镜像只在 lockfile 里有，所以 PnP 会拒绝它，web 服务
+  根本起不来。需要替换一行（改用已声明的 `@ai-sdk/openai` 里的 `createOpenAI`），之后
+  该功能还需要 `AI_ENABLED`、`AI_BASE_URL`、`AI_API_KEY` 才能真正做事；
+- 管理面板不能像现在这样占用 `/admin/user`：基础镜像的 `user-activate` 模块已经注册了
+  该路径并把它重定向到 `/admin/register`，而模块序列只能往后追加，所以
+  `user-activate` 赢。
+
 ---
 
 ## 4. 修订与审阅面板

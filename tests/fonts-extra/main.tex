@@ -2,13 +2,29 @@
 % Overleaf documents them
 % (https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F).
 %
-% fontspec resolves a family name through fontconfig, so this example fails to
-% compile when one of these families is missing - which is exactly the error it
-% exists to catch ("The font ... cannot be found"). It is compiled with XeLaTeX
-% (see the latexmkrc next to it) because that is the engine that goes through
-% fontconfig.
+% fontspec resolves a family name through fontconfig, and `\newfontfamily`
+% resolves it **when it is declared**, not when it is first used - so this file
+% fails to compile when one of these families is missing, which is exactly the
+% error it exists to catch ("The font ... cannot be found"). That was measured,
+% not assumed: a file that declares a family which does not exist fails, even
+% though it never typesets anything in it.
 %
-% Every name below was read out of the font files of the package that provides
+% Nothing is typeset in most of these families on purpose. A font that has no
+% Latin characters at all (Noto Serif Yezidi, the Lohit families, ...) makes
+% XeTeX fail with "there are no glyphs in the subset" as soon as Latin text is
+% typeset in it - a fatal error, not a warning - so a sample sentence per family
+% would test something other than what this example is for. The sample below is
+% rendered in the main font, to keep the route from a family name to a PDF on
+% the page.
+%
+% The command names are made of letters only, and that is not a style choice:
+% digits are not letters in TeX, so `\newfontfamily\testC059{C059}` defines
+% `\testC` and hands the lone `0` to fontspec as the font name - which fails
+% with `The font "0" cannot be found`, a message that says nothing about the
+% real mistake. Two of the families below (`C059`, `Z003`) are why this file
+% spells their command names out.
+%
+% Every family name was read out of the font files of the package that provides
 % it, not derived from the package name: `fonts-kacst` for example has no
 % `KacstOne` (that is `fonts-kacst-one`), the Thai packages provide `Tlwg Typo`
 % and not `TLWG Typo`, and `fonts-khmeros` has no plain `Khmer OS`.
@@ -19,79 +35,76 @@
 \usepackage{fontspec}
 \setmainfont{Arimo}
 
-\newcommand{\showfont}[1]{%
-  \par\noindent\textbf{#1}\quad{\fontspec{#1}The quick brown fox --- 0123456789}%
-}
+% Metric-compatible stand-ins for the Microsoft and Adobe fonts, and the URW
+% base 35 families of which C059 (Century Schoolbook) and Z003 (Zapf Chancery)
+% are two.
+\newfontfamily\fTinos{Tinos}
+\newfontfamily\fCousine{Cousine}
+\newfontfamily\fNimbusRoman{Nimbus Roman}
+\newfontfamily\fNimbusSans{Nimbus Sans}
+\newfontfamily\fNimbusMono{Nimbus Mono PS}
+\newfontfamily\fCenturySchoolbook{C059}
+\newfontfamily\fBookman{URW Bookman}
+\newfontfamily\fChancery{Z003}
+
+% Google Fonts families that the distribution packages.
+\newfontfamily\fCantarell{Cantarell}
+\newfontfamily\fComicNeue{Comic Neue}
+\newfontfamily\fOpenDyslexic{OpenDyslexic}
+\newfontfamily\fSymbola{Symbola}
+\newfontfamily\fJura{Jura}
+\newfontfamily\fElstob{Elstob}
+
+% Arabic.
+\newfontfamily\fAmiri{Amiri}
+\newfontfamily\fKacstOne{KacstOne}
+
+% Other scripts: SIL, Greek, Korean, Thai, the Indic families, Tibetan, Khmer,
+% Sinhala and Myanmar.
+\newfontfamily\fCharis{Charis SIL}
+\newfontfamily\fDoulos{Doulos SIL}
+\newfontfamily\fAbyssinica{Abyssinica SIL}
+\newfontfamily\fEzra{Ezra SIL}
+\newfontfamily\fPadauk{Padauk}
+\newfontfamily\fScheherazade{Scheherazade}
+\newfontfamily\fSophia{Sophia Nubian}
+\newfontfamily\fGfsArtemisia{GFS Artemisia}
+\newfontfamily\fGfsDidot{GFS Didot}
+\newfontfamily\fGfsNeohellenic{GFS Neohellenic}
+\newfontfamily\fBaekmuk{Baekmuk Gulim}
+\newfontfamily\fNanum{NanumGothic}
+\newfontfamily\fGaruda{Garuda}
+\newfontfamily\fLoma{Loma}
+\newfontfamily\fNorasi{Norasi}
+\newfontfamily\fTlwgTypo{Tlwg Typo}
+\newfontfamily\fUmpush{Umpush}
+\newfontfamily\fWaree{Waree}
+\newfontfamily\fLohitDeva{Lohit Devanagari}
+\newfontfamily\fLohitBeng{Lohit Bengali}
+\newfontfamily\fLohitTaml{Lohit Tamil}
+\newfontfamily\fLohitTelu{Lohit Telugu}
+\newfontfamily\fLohitMlym{Lohit Malayalam}
+\newfontfamily\fSamyak{Samyak Devanagari}
+\newfontfamily\fGargi{Gargi}
+\newfontfamily\fSahadeva{Sahadeva}
+\newfontfamily\fSarai{Sarai}
+\newfontfamily\fPagul{Pagul}
+\newfontfamily\fTibetan{Tibetan Machine Uni}
+\newfontfamily\fKhmer{Khmer OS Battambang}
+\newfontfamily\fLklug{LKLUG}
+\newfontfamily\fMyanmar{Myanmar3}
+
+% Noto, for the scripts that have no family of their own.
+\newfontfamily\fCherokee{Noto Sans Cherokee}
+\newfontfamily\fBalinese{Noto Sans Balinese}
+\newfontfamily\fYezidi{Noto Serif Yezidi}
 
 \begin{document}
 
-\section*{Metric-compatible families}
+\section*{Families selectable by name}
 
-Croscore and the URW base 35 families stand in for the Microsoft and Adobe
-fonts that cannot be redistributed:
-
-\showfont{Tinos}
-\showfont{Cousine}
-\showfont{Nimbus Roman}
-\showfont{Nimbus Sans}
-\showfont{Nimbus Mono PS}
-\showfont{C059}
-\showfont{URW Bookman}
-\showfont{Z003}
-
-\section*{Google Fonts families}
-
-\showfont{Cantarell}
-\showfont{Comic Neue}
-\showfont{OpenDyslexic}
-\showfont{Symbola}
-\showfont{Jura}
-\showfont{Elstob}
-
-\section*{Arabic and Hebrew}
-
-\showfont{Amiri}
-\showfont{KacstOne}
-
-\section*{Other scripts}
-
-\showfont{Charis SIL}
-\showfont{Doulos SIL}
-\showfont{Abyssinica SIL}
-\showfont{Ezra SIL}
-\showfont{Padauk}
-\showfont{Scheherazade}
-\showfont{Sophia Nubian}
-\showfont{GFS Artemisia}
-\showfont{GFS Didot}
-\showfont{GFS Neohellenic}
-\showfont{Baekmuk Gulim}
-\showfont{NanumGothic}
-\showfont{Garuda}
-\showfont{Loma}
-\showfont{Norasi}
-\showfont{Tlwg Typo}
-\showfont{Umpush}
-\showfont{Waree}
-\showfont{Lohit Devanagari}
-\showfont{Lohit Bengali}
-\showfont{Lohit Tamil}
-\showfont{Lohit Telugu}
-\showfont{Lohit Malayalam}
-\showfont{Samyak Devanagari}
-\showfont{Gargi}
-\showfont{Sahadeva}
-\showfont{Sarai}
-\showfont{Pagul}
-\showfont{Tibetan Machine Uni}
-\showfont{Khmer OS Battambang}
-\showfont{LKLUG}
-\showfont{Myanmar3}
-
-\section*{Noto, for the scripts without a family of their own}
-
-\showfont{Noto Sans Cherokee}
-\showfont{Noto Sans Balinese}
-\showfont{Noto Serif Yezidi}
+This line is set in the main font, Arimo, which is the croscore stand-in for
+Arial. Every other family above is resolved by fontconfig when it is declared,
+which is what this example verifies.
 
 \end{document}

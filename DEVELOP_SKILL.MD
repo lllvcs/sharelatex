@@ -46,6 +46,8 @@ description: Use when developing on the Overleaf CE (sharelatex) fork — touchi
 | S15 Ship the file name the base image asks for | adding a file the application imports |
 | S16 Extend the settings, do not replace them | adding a setting |
 | S17 Verify the toolchain at build time | adding a program a compile calls |
+| S18 Bring a moving third party up to date first | installing from CTAN or a mirror |
+| S19 Read the test runner before trusting its configuration | a test sets its own environment |
 
 ---
 
@@ -385,9 +387,74 @@ route).
 the font file before you write it down, or CI fails on a name that was never
 right (`.research/font-check/` does this with `fontTools`, and it corrected three
 names). Check that a package exists on **both** Ubuntu releases the base image
-may be built on, and never add a font that can change what `serif`, `sans-serif`
-or `monospace` resolve to - a document that names no font has to keep rendering
-as it did.
+may be built on. Never add one that could take over a generic family on its own:
+`fonts-ubuntu` is left out for exactly that reason. Note that the generic
+families can still drift within a family - with the full collection `serif`
+resolves to the Noto SemiCondensed face rather than the Regular one, and that
+cannot be pinned from fontconfig (measured; `DEVELOP_EXPERIMENT.MD` §5.3) - so
+say what the aliases resolve to rather than claiming they are unchanged.
+
+**In the example file.** `\newfontfamily` resolves a family when it is declared,
+so a declaration is a complete test and no sample text is needed. Do not typeset
+Latin text in a font that has none: XeTeX then fails with *"there are no glyphs in
+the subset"*, which is fatal. And keep digits out of the command name - digits
+are not letters in TeX, so `\newfontfamily\testC059{C059}` silently declares
+`\testC` and hands fontspec the bare `0`, failing with *The font "0" cannot be
+found*.
+
+---
+
+## S18. Bring a moving third party up to date before using it
+
+**Do.** When the build installs from a repository that is updated continuously
+(CTAN, a package mirror, a `main` branch), make the first step of that block pull
+the *tool* up to date, not just the packages.
+
+**Because.** `tlmgr install` refuses to do anything while CTAN has a newer
+`texlive.infra` than the installed one — and the base image is months old by the
+time anyone builds from it, while CTAN publishes several revisions a day. The
+result is an image that builds only on the day its base image was built, with a
+failure that looks like it belongs to whatever line happens to run first. The
+error message names the fix (`tlmgr update --self`); `update-tlmgr-latest.sh`,
+which the `Dockerfile` also runs, does *not* fix it — without arguments it leaves
+`texlive.infra` alone, and `-- --upgrade` refuses while the TeX Live year
+matches. Repeat it before every install in the same build, because the
+repository can move during a long one.
+
+**Verify.** Build the image from a *cold* cache at least once. A cached build
+hides this class of bug completely: CI passed the layers above the failure out of
+a cache built months earlier and only the new line was actually executed
+(`DEVELOP_EXPERIMENT.MD` §5.4).
+
+---
+
+## S19. Read the test runner before trusting its configuration
+
+**Do.** When a test sets up its own environment (an rc file, a config, a
+Makefile), check that the runner actually reads it in the order the test assumes.
+
+**Because.** `tests/compile.sh` passed the shared `latexmkrc` with `-r` while
+expecting the example's own `latexmkrc` to win. latexmk reads `./latexmkrc`
+*before* any `-r` file, so the shared file won and every example that asked for
+XeLaTeX was compiled with LuaLaTeX — silently, since both are valid
+configurations. The fix is to concatenate the two files in the intended order
+into one file that is *not* named `latexmkrc` (a file with that name is read on
+its own). Nothing about the resulting PDFs says which engine made them, which is
+why this survived several rounds.
+
+**Verify.** Make one example's configuration observably different (a different
+engine, a different output format) and check that it took effect, rather than
+assuming the runner honours it. Three more traps from the same round, all of
+which passed for the wrong reason until the suite was actually run
+(`DEVELOP_EXPERIMENT.MD` §5.5):
+
+- a `latexmkrc` is **Perl**: comments start with `#`, and a `%` comment makes
+  latexmk report "Initialization file gave an error" and silently compile with
+  the shared settings instead. `verify-overlay.sh` now runs `perl -c` on each;
+- a generated file next to a test is picked up by the next run of the same
+  runner (`knitr`'s `main-concordance.tex`), so exclude what a run creates;
+- run the suite **twice** in a row. The first run hides this class of bug
+  completely.
 
 ---
 

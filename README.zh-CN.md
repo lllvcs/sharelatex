@@ -23,7 +23,8 @@
   [`texlive/README.md`](texlive/README.md)
 - 带 `knitr` 的 R，因此 `.Rnw`、`.Rtex` 文档也能编译
 - 额外的 TeX Live 与系统字体，包含**已随仓库内置**的中文字体集合
-  （见 [`fonts/`](fonts/README.md)，构建镜像时无需联网下载字体）
+  （见 [`fonts/`](fonts/README.md)，构建镜像时无需联网下载字体），以及
+  [Overleaf 文档中列出的、可用 `fontspec` 调用的字体族](https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F)
 - TeX Live 的全部字体都注册到了 fontconfig，因此可以直接用**字体族名**调用；
   中文字体也按 TeX Live `zhmetrics` 度量（`uniyou20`、`unisong5b`、
   `gbkyou20` 等）所要求的文件名安装，详见[字体](#字体)
@@ -41,6 +42,8 @@
 - **沙箱编译**：每个项目在自己的 TeX Live 容器里编译，需手动开启，见
   [沙箱编译](#沙箱编译)
 - **OIDC（OpenID Connect）单点登录**，详见下文
+- 编辑器源码视图里的**符号面板**（symbol palette），由可选的前端重建提供，见
+  [重建前端](#重建前端可选)
 - 可配置的上传上限与链接地址（linked URLs），见[环境变量](#环境变量)
 
 ## 安装
@@ -531,6 +534,34 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 检查设置文件在启动时打印的那行日志（`settings.overlay:`）——它会列出已开启的模块。
 如果这行日志完全没有出现，说明 `OVERLEAF_CONFIG` 被覆盖了，而覆盖它会替换本镜像的
 设置文件，模块注册也随之丢失。
+
+如果该功能属于*由模块贡献用户界面的那一类*（AI 助手、错误助手、管理面板、模板库、
+Git 集成），它需要下面那个可选的前端重建——没有任何设置能往已经打好的打包产物里
+添加组件。
+
+## 重建前端（可选）
+
+模块的组件是通过**构建期**注册表（`Settings.overleafModuleImports`，webpack 运行时
+由 Babel 宏读取）进入浏览器的。基础镜像里有这张注册表，但每一项都是空的，而且它在
+自己构建完之后会把 webpack 工具链裁掉，所以像符号面板这样的功能只能靠重建前端来加：
+
+```bash
+docker build --build-arg OVERLEAF_REBUILD_FRONTEND=true -t lvcs/sharelatex .
+```
+
+这一步会恢复 devDependencies，用
+[`overlay/services/web/config/settings.frontend.cjs`](overlay/services/web/config/settings.frontend.cjs)
+跑一次 webpack，然后再把它们裁掉。它**默认关闭**：这会让构建时间显著变长，需要 yarn
+缓存或网络，而且只要基础镜像一升级，生成出来的打包产物就必须重新生成。CI
+（`build-test.yml`）是**带这个参数**构建的，因此即使发布的镜像并不使用这条路径，它
+依然被测试覆盖。
+
+目前重建产物里放的是**符号面板**——它是「整个效果本身就能证明机制可用」的最小模块。
+再添加一个模块是同样的三处改动：把模块复制进 `overlay/services/web/modules/`，把它
+的注册表键加进 `settings.frontend.cjs`，并且（如果它有后端路由）把模块名加进
+`moduleImportSequence`。`DEVELOP_EXPERIMENT.MD` 的 §3.2 记录了细节，包括两个坑：
+不带 `OVERLEAF_CONFIG` 跑 webpack 会产出**同样空**的打包产物而**构建仍然是绿的**；
+AI 助手还额外需要替换一处 import，并接上一个 AI 网关才有意义。
 
 ## 构建镜像
 

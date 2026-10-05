@@ -5,8 +5,20 @@ FROM sharelatex/sharelatex:6.3.0
 SHELL ["/bin/bash", "-cx"]
 
 # update tlmgr itself
+#
+# `update-tlmgr-latest.sh` alone does not do it: with `-- --upgrade` it refuses
+# when the TeX Live year already matches ("using --upgrade doesn't make sense"),
+# and without it, it leaves the installed `texlive.infra` where it was.
+#
+# That matters because `tlmgr` refuses to *install* anything while the repository
+# has a newer `texlive.infra` than the installed one - "tlmgr itself needs to be
+# updated" - and CTAN publishes several revisions of it every day. The base image
+# was built months ago, so `tlmgr install` fails in it, which means this image
+# could only be built on the day the base image was built. `tlmgr update --self`
+# is what the error asks for, and it is a no-op when there is nothing to do.
 RUN wget "https://mirror.ctan.org/systems/texlive/tlnet/update-tlmgr-latest.sh" \
     && sh update-tlmgr-latest.sh \
+    && tlmgr update --self \
     && tlmgr --version
 
 # enable tlmgr to install ctex
@@ -16,7 +28,11 @@ RUN tlmgr update texlive-scripts
 RUN tlmgr update --all
 
 # install all the packages
-RUN tlmgr install scheme-full
+#
+# `update --self` again first: `update --all` above downloads for minutes, which
+# is long enough for CTAN to publish a new `texlive.infra` and for this install
+# to be refused. The same applies to every install in this file.
+RUN tlmgr update --self && tlmgr install scheme-full
 
 # recreate symlinks
 RUN tlmgr path add
@@ -26,7 +42,7 @@ RUN tlmgr path add
 # are the ones every compile needs (the package list is the one Overleaf's
 # server-ce/Dockerfile-base uses). Installing an already present package is a
 # no-op, so this only ever adds something.
-RUN tlmgr install latexmk texcount synctex etoolbox xetex
+RUN tlmgr update --self && tlmgr install latexmk texcount synctex etoolbox xetex
 
 # update system packages
 RUN apt-get update && apt-get upgrade -y
@@ -111,10 +127,22 @@ ENV LANG=C.UTF-8
 # when it is missing, which is the error this block exists to remove.
 #
 # Every package here was checked to exist in both Ubuntu 24.04 and 22.04, so the
-# block does not depend on which release the base image is built on, and nothing
-# is installed that could change how a fontless document is rendered: in
-# particular `fonts-ubuntu` is left out, because a document that names no font
-# has to keep rendering exactly as it did (tests/fonts-extra guards this).
+# block does not depend on which release the base image is built on. Nothing is
+# installed either that could win one of the generic families outright:
+# `fonts-ubuntu` is left out for that reason, because a sans-serif alias it took
+# over would change documents that never named a font.
+#
+# One measured caveat, recorded here because the obvious fix does not work: the
+# collection moves what `serif` and `sans-serif` resolve to from the Noto
+# Regular faces to the SemiCondensed ones (`monospace` stays DejaVu Sans Mono).
+# Pinning them cannot be done from the pattern side - `<alias><prefer>`, a
+# `<match>` that prepends the family, and assigning a normal `width`, with and
+# without `binding="strong"`, were all measured to have no effect, because every
+# Noto Serif face declares the same family name and fontconfig ignores the
+# requested width when it chooses between them. An ordinary LaTeX document is
+# unaffected in any case: its default font comes from the format (Latin Modern),
+# not from fontconfig. What this shows in is a document that names a *generic*
+# family, and in non-TeX tools that ask fontconfig for "serif".
 #
 #   Noto          the script coverage Overleaf itself recommends ("use the
 #                 relevant Google Noto font, as included in Ubuntu")
@@ -284,7 +312,17 @@ RUN --mount=type=bind,source=fonts,target=/tmp/latex-chinese-fonts \
     for pair in SimSun.ttc:simsun.ttc SimHei.ttf:simhei.ttf KaiTi.ttf:simkai.ttf \
                 FangSong.ttf:simfang.ttf LiSu.ttf:simli.ttf YouYuan.ttf:simyou.ttf ; do \
       src="${pair%%:*}"; dst="${pair##*:}"; \
-      find /tmp/latex-chinese-fonts -name "$src" -exec cp {} "$TRUETYPE/$dst" \; ; \
+      find /tmp/latex-chinese-fonts -iname "$src" -exec cp {} "$TRUETYPE/$dst" \; ; \
+    done && \
+    for name in simsun.ttc simhei.ttf simkai.ttf simfang.ttf simli.ttf simyou.ttf ; do \
+      test -f "$TRUETYPE/$name" || { \
+        echo "ERROR: $TRUETYPE/$name was not installed. The vendored collection names" ; \
+        echo "       its files the way its upstream does (Kaiti.ttf, not KaiTi.ttf), so the" ; \
+        echo "       copy above matches case-insensitively; a file that is missing here means" ; \
+        echo "       the name changed upstream. tests/fonts-zhmetrics needs all six." ; \
+        ls /tmp/latex-chinese-fonts | head -40 ; \
+        exit 1 ; \
+      } ; \
     done && \
     cp /tmp/latex-chinese-fonts/zhwinfonts-simfonts.map "$MAPS"/ && \
     mktexlsr && \
@@ -370,7 +408,7 @@ RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -
       esac ; \
     done ; \
     for alias in serif sans-serif monospace ; do \
-      echo "  fc-match $alias -> $(fc-match -f '%{family}' "$alias") (installing fonts must not change this)" ; \
+      echo "  fc-match $alias -> $(fc-match -f '%{family}' "$alias")" ; \
     done
 
 # TeX Live configuration, in the same texmf.cnf the shell_escape setting used to
@@ -431,16 +469,35 @@ RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -
     echo "  found /usr/bin/time" && \
     Rscript -e 'library(knitr); library(stringr); cat("  R can load knitr and stringr\n")'
 
-# `dvipdfmx-unsafe.cfg` is the one that is not optional: texlive/LatexMk points
-# xdvipdfmx at it, so a missing file breaks every XeLaTeX compile - including
+# The XeLaTeX route of texlive/LatexMk ends in
+#
+#     xdvipdfmx -z 6 -i dvipdfmx-unsafe.cfg -o out.pdf in.xdv
+#
+# so that file has to resolve, or every XeLaTeX compile fails - including
 # tests/fonts-by-name, which CI compiles against the built image.
+#
+# It is checked by compiling, not with `kpsewhich`: kpsewhich's file type for
+# `.cfg` does not include texmf-dist, so `kpsewhich dvipdfmx-unsafe.cfg` exits 1
+# while the file sits in
+# /usr/local/texlive/<year>/texmf-dist/dvipdfmx/dvipdfmx-unsafe.cfg - which is
+# how an earlier version of this check failed a perfectly good build. What the
+# claim needs is the whole route: xelatex, xdvipdfmx and its config file.
 RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -1) && \
     export PATH="$TLBIN:$PATH" && \
-    DVIPDFMX_CFG=$(kpsewhich dvipdfmx-unsafe.cfg) || { \
-      echo "ERROR: dvipdfmx-unsafe.cfg is missing, so the xelatex command in texlive/LatexMk would fail" ; \
+    rm -rf /tmp/xelatex-check && mkdir -p /tmp/xelatex-check && \
+    cd /tmp/xelatex-check && \
+    printf '%s\n' '\documentclass{article}' '\begin{document}' 'Hello.' '\end{document}' > minimal.tex && \
+    latexmk -xelatex -interaction=nonstopmode minimal.tex || { \
+      echo "ERROR: a minimal XeLaTeX compile fails. texlive/LatexMk points xdvipdfmx at" ; \
+      echo "       dvipdfmx-unsafe.cfg, so every XeLaTeX document would fail to build." ; \
       exit 1 ; \
     } ; \
-    echo "  found dvipdfmx-unsafe.cfg -> $DVIPDFMX_CFG"
+    test -s /tmp/xelatex-check/minimal.pdf || { \
+      echo "ERROR: XeLaTeX produced no PDF" ; \
+      exit 1 ; \
+    } ; \
+    echo "  a minimal XeLaTeX compile works ($(stat -c %s /tmp/xelatex-check/minimal.pdf) byte PDF, xdvipdfmx config file resolved)" ; \
+    rm -rf /tmp/xelatex-check
 
 # ---------------------------------------------------------------------------
 # OIDC / SSO login support, see overlay/README.md

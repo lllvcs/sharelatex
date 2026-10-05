@@ -1,0 +1,10 @@
+# The shared ../latexmkrc compiles with LuaLaTeX. That is exactly what this
+# example cannot use: \write18 is a no-op under LuaTeX (TeX Live's LuaTeX does
+# not implement \write18 as a shell escape at all - the recommendation there is
+# os.execute through \directlua, which is what packages like minted and svg
+# switch to when they detect LuaTeX, and why they work under it). XeLaTeX and
+# pdfLaTeX run \write18 as expected, so the example asks for XeLaTeX.
+#
+# This is Perl, so the comments start with # and not with %.
+$pdf_mode = 5;
+$xelatex = 'xelatex -synctex=1 -interaction=nonstopmode -file-line-error -shell-escape -recorder';

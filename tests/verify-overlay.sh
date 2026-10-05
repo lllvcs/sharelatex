@@ -55,12 +55,30 @@ for (const name of ['track-changes', 'sandboxed-compiles']) {
 for (const name of ['history-v1', 'launchpad', 'server-ce-scripts', 'user-activate']) {
   if (!settings.moduleImportSequence.includes(name)) throw new Error(name + ' was dropped from moduleImportSequence: ' + JSON.stringify(settings.moduleImportSequence))
 }
-if (settings.imageRoot !== 'ghcr.io/ayaka-notes') throw new Error('imageRoot is ' + settings.imageRoot)
-if (settings.allowedImageNames.length !== 1) throw new Error('allowedImageNames is ' + JSON.stringify(settings.allowedImageNames))
-if (settings.currentImageName !== 'ghcr.io/ayaka-notes/texlive-full:2026.1') throw new Error('currentImageName is ' + settings.currentImageName)
 if (settings.maxUploadSize !== 120 * 1024 * 1024) throw new Error('maxUploadSize is ' + settings.maxUploadSize)
 if (!settings.mongo || !settings.mongo.url) throw new Error('the settings of the base image were lost')
 console.log('  moduleImportSequence: ' + JSON.stringify(settings.moduleImportSequence))
+"
+
+echo "== the settings a module owns are applied when it is loaded =="
+# imageRoot, allowedImageNames and currentImageName belong to the
+# sandboxed-compiles *module*: it assigns them when the module registry imports
+# its index.mjs, not when the settings file is read. Checking them after
+# require() alone is how an earlier version of this script failed on a perfectly
+# good image, so the module is loaded here the way the service loads it.
+cd $WEB
+SANDBOXED_COMPILES=true \
+ALL_TEX_LIVE_DOCKER_IMAGES='ghcr.io/ayaka-notes/texlive-full:2026.1' \
+TEX_LIVE_DOCKER_IMAGE='ghcr.io/ayaka-notes/texlive-full:2026.1' \
+node --input-type=module -e "
+import { createRequire } from 'node:module'
+const require = createRequire('$WEB/')
+const Settings = require('@overleaf/settings')
+await import('$WEB/modules/sandboxed-compiles/index.mjs')
+if (Settings.imageRoot !== 'ghcr.io/ayaka-notes') throw new Error('imageRoot is ' + Settings.imageRoot)
+if (Settings.allowedImageNames.length !== 1) throw new Error('allowedImageNames is ' + JSON.stringify(Settings.allowedImageNames))
+if (Settings.currentImageName !== 'ghcr.io/ayaka-notes/texlive-full:2026.1') throw new Error('currentImageName is ' + Settings.currentImageName)
+console.log('  imageRoot: ' + Settings.imageRoot + ', currentImageName: ' + Settings.currentImageName)
 "
 
 echo "== the modules are registered on a default start =="
@@ -145,8 +163,19 @@ echo "== the clsi docker runner resolves its imports =="
 # Server Pro file, added back by the overlay. Importing it proves that dockerode,
 # async and lodash are reachable under Yarn PnP; the module starts a timer, so
 # the process is ended explicitly.
+#
+# It has to run with SANDBOXED_COMPILES=true and the host directories set,
+# because that is the only configuration in which clsi's own defaults define
+# `clsi.docker` at all - DockerRunner reads `Settings.clsi.docker.maxContainerAge`
+# at import time, and with the feature off that is undefined and the import
+# throws. clsi's defaults say the same thing in their own words: "SANDBOXED_COMPILES
+# enabled, but SANDBOXED_COMPILES_HOST_DIR_COMPILES not set".
 cd $CLSI
-SANDBOXED_COMPILES=false timeout 60 node --input-type=module -e "
+SANDBOXED_COMPILES=true \
+SANDBOXED_COMPILES_HOST_DIR_COMPILES=/tmp/overleaf-check/compiles \
+SANDBOXED_COMPILES_HOST_DIR_OUTPUT=/tmp/overleaf-check/output \
+SANDBOXED_COMPILES_HOST_DIR_CACHE=/tmp/overleaf-check/cache \
+timeout 60 node --input-type=module -e "
 const { default: DockerRunner } = await import('./app/js/DockerRunner.js')
 if (typeof DockerRunner.run !== 'function' || typeof DockerRunner.kill !== 'function') {
   throw new Error('DockerRunner is incomplete')
@@ -191,17 +220,42 @@ for setting in 'shell_escape = t' 'openout_any = a' 'openin_any = a' 'OSFONTDIR 
 done
 
 echo "== the latexmk configuration provides the custom dependencies =="
+# Compared without whitespace, because the spacing of the rc file is not part of
+# what is being checked: an earlier version of this check looked for
+# `add_cus_dep( 'glo', 'gls', 0, 'glo2gls')` while the file says
+# `add_cus_dep( 'glo', 'gls', 0, 'glo2gls' );` and failed a correct image.
+LATEXMK_STRIPPED=/tmp/latexmk-stripped-$$
+tr -d ' \t' < /usr/local/share/latexmk/LatexMk > "$LATEXMK_STRIPPED" || exit 1
 for dependency in "add_cus_dep( 'Rtex', 'tex', 0, 'do_knitr')" \
                   "add_cus_dep( 'Rnw', 'tex', 0, 'do_knitr')" \
                   "add_cus_dep( 'glo', 'gls', 0, 'glo2gls')" \
                   "add_cus_dep(\"nlo\", \"nls\", 0, \"nlo2nls\")" \
                   "add_cus_dep(\"asy\",\"pdf\",0,\"asy\")" \
                   'run-chktex.sh' ; do
-  grep -qF "$dependency" /usr/local/share/latexmk/LatexMk || {
+  stripped=$(printf '%s' "$dependency" | tr -d ' \t')
+  grep -qF "$stripped" "$LATEXMK_STRIPPED" || {
+    rm -f "$LATEXMK_STRIPPED"
     echo "ERROR: '$dependency' is missing from /usr/local/share/latexmk/LatexMk, a whole feature would be silently unavailable" ; \
     exit 1 ; \
   }
   echo "  $dependency"
+done
+rm -f "$LATEXMK_STRIPPED"
+
+echo "== the latexmkrc files of the examples are valid Perl =="
+# A latexmkrc is Perl, so a comment starts with `#` and not with `%`. An rc file
+# that does not parse is reported by latexmk as "Initialization file gave an
+# error" and the example is then compiled with the shared settings instead -
+# which, for an example that asks for a different engine, fails silently in a way
+# that looks like the engine being wrong.
+for rc in /tests/*/latexmkrc ; do
+  [ -f "$rc" ] || continue
+  if ! perl -c "$rc" > /dev/null 2>&1 ; then
+    echo "ERROR: $rc is not valid Perl:" ; \
+    perl -c "$rc" 2>&1 | head -3 ; \
+    exit 1 ; \
+  fi
+  echo "  ok: $rc ($(grep -E '^\$pdf_mode' "$rc" | tail -1 | tr -d ' ;'))"
 done
 
 echo "== the LuaTeX font database is part of the image =="

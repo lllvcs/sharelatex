@@ -26,6 +26,13 @@ development:
 
 ## Example documents
 
+An example directory may put its own `latexmkrc` next to its source to change
+settings such as the engine. `compile.sh` concatenates it *after* the shared
+`/tests/latexmkrc` into one file and passes that with `-r`, because latexmk reads
+`./latexmkrc` before any `-r` file: passing the shared file with `-r` would make
+it override the example, which is how the examples that ask for XeLaTeX were
+compiled with LuaLaTeX for several rounds.
+
 | Example | What it verifies |
 | --- | --- |
 | `chinese-fonts` | the vendored Chinese fonts are registered with fontconfig (`SimSun`, `SimHei`, `FangSong`) |

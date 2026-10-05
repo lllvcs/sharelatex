@@ -506,9 +506,15 @@ Notes:
   [texlive-full](https://github.com/ayaka-notes/texlive-full) does): the packaged
   set is reproducible, it exists on both Ubuntu releases the base image may be,
   and every package was checked against both. `fonts-ubuntu` is deliberately
-  **not** among them - installing it could change how a document that names no
-  font is rendered, and the build prints what `serif`, `sans-serif` and
-  `monospace` resolve to so that such a change would be visible.
+  **not** among them, because it could take over the `sans-serif` alias.
+  One measured caveat: the collection moves what `serif` and `sans-serif`
+  resolve to from the Noto Regular faces to the SemiCondensed ones, and that
+  cannot be pinned from the fontconfig side (every Noto Serif face declares the
+  same family name, and fontconfig ignores the requested width when choosing
+  between them). An ordinary document is unaffected - its default font comes
+  from the format, not from fontconfig - so this shows in a document that names a
+  *generic* family and in non-TeX tools. The build prints what the three aliases
+  resolve to (`DEVELOP_EXPERIMENT.MD` §5.3).
   The families Overleaf lists that **no** distribution packages - among them
   *Merriweather*, *Raleway*, *Oswald*, *Open Sans Condensed*, *Source Sans Pro*
   and *PT Sans* - are therefore still missing; vendoring them into
@@ -636,6 +642,13 @@ bundle has to be regenerated whenever the base image moves. CI
 (`build-test.yml`) builds *with* it, so the path is tested even though the
 published image does not use it.
 
+Measured on a real build rather than assumed: `yarn install` took 15 seconds from
+the image's own yarn cache, webpack 35 seconds, the rebuilt manifest has the same
+41 entrypoints as the base image's, and the module's component is in
+`public/js/pages/ide-*.js`. `DEVELOP_EXPERIMENT.MD` §3.2 has the details,
+including what it still does not prove (that the palette renders correctly in a
+browser).
+
 What is in the rebuilt bundle today is the **symbol palette** - the smallest
 module whose entire effect is proof that the mechanism works. Adding another is
 the same three edits: copy the module into `overlay/services/web/modules/`, add
@@ -702,7 +715,7 @@ drives the base image version) is updated, the build fails instead of silently
 mixing the overlay with a newer application version. In that case, re-base the
 overlay as described in [overlay/README.md](overlay/README.md).
 
-The overlay also depends on the *shape* of the CE image in three places that a
+The overlay also depends on the *shape* of the CE image in several places that a
 base image update can change; the build checks them and fails with a message
 naming what to do:
 
@@ -712,6 +725,22 @@ naming what to do:
   overlay ships it under both names a release may use);
 - the TeX Live configuration files the `Dockerfile` appends to and the programs
   the compile toolchain calls.
+
+Two dependencies a base image update cannot fix, because they are outside it:
+
+- **CTAN.** `tlmgr install` refuses to work while the repository has a newer
+  `tlmgr` than the installed one, and the base image is months old by the time it
+  is used. Every install in the `Dockerfile` is therefore preceded by
+  `tlmgr update --self`, which is what makes the image buildable at all; without
+  it the build works only on the day the base image was built
+  (`DEVELOP_EXPERIMENT.MD` §5.4).
+- **the frontend.** If the image is built with
+  `--build-arg OVERLEAF_REBUILD_FRONTEND=true`, the bundle is compiled from the
+  base image's frontend sources, so it has to be rebuilt whenever the base image
+  moves. The registry the rebuild reads
+  (`overlay/services/web/config/settings.frontend.cjs`) names paths inside the
+  module directories of this repository, and `tests/frontend-rebuild.test.mjs`
+  fails when one of them stops resolving.
 
 ## Credits
 

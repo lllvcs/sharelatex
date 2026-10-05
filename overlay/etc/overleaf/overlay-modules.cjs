@@ -167,25 +167,30 @@ function assignDeep(target, source) {
  * @returns {string[]}
  */
 function readModuleImportSequence(load, paths) {
+  const problems = []
   for (const path of paths) {
     let defaults
     try {
       defaults = load(path)
     } catch (err) {
-      console.error(
-        `settings.overlay: could not read ${path}: ${err.message}`
-      )
+      // A path that is simply not there is expected: the settings library
+      // prefers a `.cjs` file while the CE image ships only a `.js` one, so
+      // reporting every miss would make a healthy image look broken. Only a file
+      // that is present and does not load is worth a message of its own.
+      problems.push(`${path}: ${err.message}`)
       continue
     }
     if (!Array.isArray(defaults?.moduleImportSequence)) {
-      console.error(`settings.overlay: ${path} has no moduleImportSequence`)
+      problems.push(`${path} has no moduleImportSequence`)
       continue
     }
     return defaults.moduleImportSequence
   }
   console.error(
     'settings.overlay: using the built-in module sequence of Overleaf ' +
-      `${FALLBACK_MODULE_IMPORT_SEQUENCE.join(', ')}`
+      `(${FALLBACK_MODULE_IMPORT_SEQUENCE.join(', ')}); no default settings file ` +
+      'could be read: ' +
+      problems.join('; ')
   )
   return FALLBACK_MODULE_IMPORT_SEQUENCE
 }

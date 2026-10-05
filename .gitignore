@@ -2,6 +2,8 @@
 
 # Latexmk products
 *.pdf
+# the xref table Overleaf's pre/post-process hooks extract next to the PDF
+*.pdfxref
 
 # knitr products: the .tex and the concordance file are generated from the
 # .Rnw/.Rtex next to them (tests/knitr)
@@ -46,3 +48,4 @@ _minted*
 *.toc
 *.vrb
 *.xml
+tests/*/subdir/

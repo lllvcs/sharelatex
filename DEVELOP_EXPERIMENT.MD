@@ -254,6 +254,21 @@ verification checks the *output*, not the command:
   proves the whole path. `docker-build.yml` does not, so the published image is
   unchanged until this is deliberately switched on.
 
+**What running it actually did**, measured against the real image on 2026-10-05
+(28 cores, the base image's own yarn cache, no network for the install):
+
+| Step | Result |
+| --- | --- |
+| `yarn install --immutable` | 15 s, from `/overleaf/.yarn/cache` alone - the cache really did keep the pruned devDependencies |
+| `yarn run webpack:production` | 35 s, 464 JS assets, `manifest.json` written |
+| the settings file | `Using settings from /overleaf/services/web/config/settings.frontend.cjs`, followed by `Detected change in overleafModuleImports, purging babel cache!` - the registry is read where it should be |
+| the bundle | 41 entrypoints, the same ones as the base image's manifest, **plus** the module's component found in `public/js/pages/ide-*.js` |
+| `yarn workspaces focus --all --production` | pruned the devDependencies again; the running image is unchanged |
+
+So the rebuild works, and the mechanism is no longer a hypothesis. What it does
+*not* answer is whether the palette renders correctly in a browser - that needs a
+running instance, not a build.
+
 **What it costs**, and why it is not the default: the image build gains a
 `yarn install` and a production webpack run; the bundle is generated from *this*
 image's frontend sources, so it has to be regenerated whenever the base image
@@ -454,6 +469,114 @@ Three things made the port more careful than a package list:
 in the log. That is the difference to the original plan of "add some Google
 fonts": the list is now something the repository can regress against.
 
+Three things that example taught, all of which are now in the file:
+
+- **Declaring a family is enough to test it.** `\newfontfamily{X}` resolves the
+  name through fontconfig when it is declared, not when it is first used - a
+  family that does not exist fails the build even if nothing is ever typeset in
+  it. That was measured in both directions, and it matters because the obvious
+  alternative (a sample sentence per family) does not work: a font with no Latin
+  characters at all makes XeTeX fail with "there are no glyphs in the subset".
+- **`\newfontfamily\testC059{C059}` does not do what it looks like.** Digits are
+  not letters in TeX, so that declares `\testC` and hands fontspec the lone `0`
+  as the font name; the error is `The font "0" cannot be found`, which says
+  nothing about the real mistake. Two of the families are called `C059` and
+  `Z003`, so their command names are spelled out.
+- **The generic families cannot be pinned, and the collection does move them.**
+  With the font set this image had before, `serif` and `sans-serif` resolved to
+  the Noto Regular faces; with the full collection they resolve to the
+  SemiCondensed ones. `<alias><prefer>`, a `<match>` that prepends the family,
+  and assigning a normal `width` - each with and without `binding="strong"` -
+  were all measured to have no effect, because every Noto Serif face declares the
+  same family name and fontconfig ignores the requested width when choosing
+  between them. Only rejecting the condensed faces would work, at the price of
+  making them unselectable. An ordinary LaTeX document is unaffected either way:
+  its default font comes from the format (Latin Modern), not from fontconfig, so
+  this shows in a document that names a *generic* family and in non-TeX tools.
+  `fonts-ubuntu` is still left out of the package list, since it could win the
+  `sans-serif` alias outright.
+
+### 5.4 The build used to work only on the day the base image was built
+
+The first CI run of this round failed, and the failure had nothing to do with
+what it was testing:
+
+```
+#16 [stage-0 7/36] RUN tlmgr install latexmk texcount synctex etoolbox xetex
+tlmgr itself needs to be updated.
+...
+tlmgr: Terminating; please see warning above!
+```
+
+`tlmgr` refuses to *install* anything while the CTAN repository has a newer
+`texlive.infra` than the installed one. The base image ships `tlmgr revision
+79639` from July; the repository was at `80502` by October, and CTAN publishes
+several revisions of that package every day. So **the image could not be built
+from scratch at all** - the CI run only got as far as it did because the layers
+up to `tlmgr install scheme-full` were cache hits from a build made months
+earlier. A cold build would have failed at `scheme-full`, and a reader of the
+Dockerfile would have had no way to know.
+
+What the fix is *not*: `update-tlmgr-latest.sh`, which the Dockerfile already
+ran. Without arguments it leaves `texlive.infra` where it was, and with
+`-- --upgrade` - the form Overleaf's own `Dockerfile-base` uses - it refuses here
+with *"have TL 2026, new version also 2026; using --upgrade doesn't make sense;
+terminating"*. What the fix is: `tlmgr update --self`, which is what the error
+message asks for, and which is a no-op when there is nothing to do. Measured
+both ways in a container before touching the Dockerfile.
+
+Because the repository can move again *during* a build (scheme-full alone takes
+minutes), every `tlmgr install` in the Dockerfile is preceded by
+`tlmgr update --self`, not just the first one.
+
+The general lesson, and the reason this is in a record rather than a commit
+message: **a build that depends on a moving third party needs its first step to
+bring that third party up to date**, or the dependency is invisible until the day
+it breaks.
+
+### 5.5 What running the tests for the first time found
+
+The image had never been built from a cold cache when this round started, so
+neither `tests/verify-overlay.sh` nor `tests/compile.sh` had ever run - the last
+green CI was months old and predated most of the tests. Building it locally and
+running both turned up nine defects, none of which any amount of reading had
+found. They are listed here because the pattern is the point: seven of the nine
+were in the *tests*, and all seven passed for the wrong reason or would have
+failed on a correct image.
+
+| What was wrong | How it showed | Why it had survived |
+| --- | --- | --- |
+| `tlmgr install` refused to run (above, §5.4) | the build stopped at the first `tlmgr install` | the layers above it came from a cache built months earlier |
+| `tests/compile.sh` gave latexmk the shared rc with `-r`, so the example's own rc never won | every example asking for XeLaTeX was compiled with LuaLaTeX | nothing in a PDF says which engine made it |
+| the knitr example was handed `main.Rnw` instead of the `main.tex` clsi asks for | latexmk ran the engine on R source | the example had never been compiled |
+| latexmk needs `-jobname=output` (which clsi also passes) or it exits 12 after a harmless first pass | `compile.sh` failed on the knitr example although the PDF was correct | same |
+| the vendored KaiTi font is called `Kaiti.ttf`, not `KaiTi.ttf`, so the case-sensitive copy never made `simkai.ttf` | `tests/fonts-zhmetrics` failed with `cannot open TrueType font file` | same |
+| `verify-overlay.sh` read the settings with `require()` and then asserted settings that a *module* applies at load time | `imageRoot is undefined` on a correct image | it had never run |
+| it also imported clsi's `DockerRunner` with the feature off, where `clsi.docker` does not exist | `Cannot read properties of undefined (reading 'maxContainerAge')` | same |
+| it compared the latexmk rc against strings with a different spacing than the file uses | `add_cus_dep( 'glo'...` "missing" from a correct file | same |
+| `compile.sh` compiled knitr's generated `main-concordance.tex` on the second run | the first run left it behind and the second failed | only visible when run twice |
+
+Two behaviours are worth recording as *properties of the product*, found the same
+way and now written down where a user would look for them:
+
+- **`\tikzexternalize` cannot work under Overleaf's compile invocation.** pgfplots
+  externalizes a figure by running a second compile whose wrapper is
+  `\def\tikzexternalrealjob{\jobname}\input{\jobname}`, and clsi calls latexmk
+  with `-jobname=output` while the source keeps its own name - so the wrapper
+  looks for `output.tex`, which does not exist. The figure fails ("! Emergency
+  stop" in its own log, `tikzext/plot.log`) while the surrounding document still
+  produces a PDF, which is what makes it hard to notice. The workaround is to
+  name the source in `external/system call` instead of relying on `\texsource`.
+  The example that had been written to test this was reduced to what it can
+  actually prove - shell-escape writing into a subdirectory - rather than
+  asserting something the product does not do.
+- **`\write18` is a no-op under LuaLaTeX.** XeLaTeX and pdfLaTeX run it,
+  LuaLaTeX does not (TeX Live's LuaTeX expects `os.execute` through
+  `\directlua`), which is why `minted` and `svg` work under LuaLaTeX - they
+  detect the engine and switch. A document with a hand-written `\write18` works
+  under two of the three engines, which is worth knowing before blaming the
+  image: `texmf.cnf` has `shell_escape = t` and the fail is the engine's.
+
 ---
 
 ## 6. Security findings fixed after the first port
@@ -601,8 +724,11 @@ and compiles the views.
   `PT Sans`, ...). Vendoring a curated subset would close that without a
   build-time download, and is the one thing `texlive-full`'s approach still has
   over this one.
-- If a frontend build step is ever added, the AI assistant becomes reachable
-  after a single import substitution (§3); until then it is not.
+- The frontend rebuild exists and works (§3.2) and currently carries one module,
+  `symbol-palette`. What it makes reachable next, and what each still needs, is
+  recorded there: the AI assistant needs a one-line import substitution plus an
+  AI gateway, and the admin panel collides with `user-activate` on `/admin/user`.
+  Adding any of them is three edits and a rebuild.
 - `MAX_UPLOAD_SIZE` and the linked-URL proxy are settings only because they are
   read by CE core code; the two features they belong to (large uploads, linked
   URLs) are otherwise complete in the image.
