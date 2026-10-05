@@ -178,6 +178,9 @@ node --test /tests/overlay-settings.test.mjs
 echo "== the TeX Live images of the sandboxed compiles =="
 node --test /tests/sandboxed-compiles-images.test.mjs
 
+echo "== the settings file of the optional frontend rebuild =="
+node --test /tests/frontend-rebuild.test.mjs
+
 echo "== the TeX Live settings are in place =="
 TLROOT=$(find /usr/local/texlive -maxdepth 1 -type d -name '20*' | head -1)
 TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -1)
@@ -222,5 +225,42 @@ echo "== the views compile =="
 # loud instead of only slowing down the first boot of a container
 cd /overleaf/services/web
 yarn run precompile-pug
+
+if [ -f /opt/overleaf-frontend-rebuilt ]; then
+  echo "== the module user interfaces are in the rebuilt bundle =="
+  # The stamp only exists when the image was built with
+  # --build-arg OVERLEAF_REBUILD_FRONTEND=true.
+  #
+  # Two things are checked, and they fail in opposite directions: that the
+  # component of the module really was compiled into the bundle, and that the
+  # rebuild did not throw the rest of the frontend away. The second is the one
+  # that a configuration mistake produces - webpack without OVERLEAF_CONFIG
+  # reads the empty registry of the base image and builds an equally empty
+  # bundle, with a green build.
+  cd /overleaf/services/web
+  node -e "
+const manifest = require('/overleaf/services/web/public/manifest.json')
+const entrypoints = Object.keys(manifest.entrypoints || {})
+if (entrypoints.length < 30) {
+  throw new Error('the rebuilt manifest has only ' + entrypoints.length + ' entrypoints: ' + JSON.stringify(entrypoints))
+}
+for (const name of ['bootstrap', 'pages/ide', 'pages/project-list', 'marketing']) {
+  if (!manifest.entrypoints[name]) {
+    throw new Error('the rebuilt manifest lost the core entrypoint ' + name)
+  }
+}
+console.log('  the rebuilt manifest has ' + entrypoints.length + ' entrypoints, including the core ones')
+" || exit 1
+  # The marker is a CSS class of the symbol-palette component. CSS is extracted
+  # into public/stylesheets, so finding it in public/js means the module's own
+  # JavaScript was bundled.
+  grep -rlq 'symbol-palette-close-button-outer' public/js || {
+    echo "ERROR: the frontend was rebuilt but the symbol palette component is not in public/js." ; \
+    echo "       Was OVERLEAF_CONFIG set for the webpack run? Without it, webpack reads the" ; \
+    echo "       empty registry of the base image and produces an equally empty bundle." ; \
+    exit 1 ; \
+  }
+  echo "  the symbol palette component is in the bundle"
+fi
 
 echo "overlay checks passed"

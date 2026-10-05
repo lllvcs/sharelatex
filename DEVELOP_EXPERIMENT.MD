@@ -206,6 +206,75 @@ That last row is the reason the inspection was worth the download: it is a
 failure that only shows up on a real compile, in a deployment, with the socket
 mounted.
 
+### 3.2 Rebuilding the frontend (the opt-in step)
+
+The measurements above leave one question open: if the sources are there and only
+the toolchain was pruned, does a rebuild actually work? The answer is now in the
+repository as an opt-in build step, proved with the smallest feature that can
+prove it.
+
+**Why `symbol-palette`.** Its `index.mjs` is four lines that log and export an
+empty object: no route, no hook, no setting. Everything the feature *is* lives in
+its frontend, pulled in through one registry key (`sourceEditorSymbolPalette`,
+which the core `symbol-palette-pane.tsx` renders). So it is the one module whose
+whole effect is proof that the registry and the bundle agree - and its imports
+are only declared packages (`react`, `react-i18next`, `match-sorter`,
+`prop-types`, all devDependencies that `yarn install` restores) plus five `@/`
+core frontend files that exist upstream. Nothing else had to be ported.
+
+**What the step does**, in `Dockerfile`, behind
+`--build-arg OVERLEAF_REBUILD_FRONTEND=true`:
+
+1. `yarn install --immutable` restores the pruned devDependencies. The yarn cache
+   in the image holds most of them, and the build has network, so this is the
+   least risky of the three.
+2. `OVERLEAF_CONFIG=…/config/settings.frontend.cjs yarn run webpack:production`
+   compiles the frontend with the registry filled. The settings file is *not* the
+   runtime one: the macro reads `@overleaf/settings` once, while webpack starts.
+3. `yarn workspaces focus --all --production` prunes the devDependencies again, so
+   the running image is the same as before - which is exactly what upstream's own
+   build does.
+
+**The trap, which is why the settings file exists at all.** Running webpack
+without `OVERLEAF_CONFIG` makes it read the image's own
+`services/web/config/settings.defaults.js`, whose registry is `[]` for every key
+except three `full-project-search` ones. The result is a byte-equivalent empty
+bundle **and a green build**. This is the failure mode to design against, so the
+verification checks the *output*, not the command:
+
+- `tests/verify-overlay.sh` looks for the module's component in `public/js`
+  (a CSS class of it, and CSS is extracted elsewhere, so a hit means the module's
+  JavaScript was bundled), and checks that the rebuilt manifest still has the
+  core entrypoints - the two mistakes fail in opposite directions.
+- `tests/frontend-rebuild.test.mjs` checks the settings file itself: the key the
+  core frontend asks for, a path that resolves, a path written relatively (so it
+  survives being copied to `/overleaf/services/web`), and that the string the
+  image check greps for is still in the component.
+- `.github/workflows/build-test.yml` builds **with** the argument, so CI is what
+  proves the whole path. `docker-build.yml` does not, so the published image is
+  unchanged until this is deliberately switched on.
+
+**What it costs**, and why it is not the default: the image build gains a
+`yarn install` and a production webpack run; the bundle is generated from *this*
+image's frontend sources, so it has to be regenerated whenever the base image
+moves; and a module whose UI is rebuilt in must still have its backend listed in
+`moduleImportSequence` for its routes to exist.
+
+**What it unblocks.** Every feature whose UI is a registry entry or a page
+entrypoint becomes reachable by adding its module and its registry key - the AI
+assistant, the error assistant, the admin panel, the template gallery, the Git
+integrations. Two things to know before that:
+
+- the AI assistant additionally needs `modules/workbench`, which imports
+  `createOpenAICompatible` from `@ai-sdk/openai-compatible` - a package the image
+  has only in its lockfile, so PnP refuses it and the web service does not boot.
+  One line needs replacing (`createOpenAI` from the declared `@ai-sdk/openai`), and
+  the feature then needs `AI_ENABLED`, `AI_BASE_URL`, `AI_API_KEY` to do anything;
+- the admin panel cannot own `/admin/user` as it is: the base image's
+  `user-activate` module already registers that path and redirects it to
+  `/admin/register`, and because the module sequence can only be appended to,
+  `user-activate` wins.
+
 ---
 
 ## 4. Track changes and the review panel

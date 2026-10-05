@@ -12,6 +12,20 @@ latexmk configuration are usable. `latexmkrc` selects LuaLaTeX for all examples;
 an example directory can add its own `latexmkrc` next to its source file to
 override that (it is read after the shared one).
 
+## Node tests
+
+Run by `verify-overlay.sh` inside the built image, and directly during
+development:
+
+| Test | What it covers |
+| --- | --- |
+| `oidc-*.test.mjs` | the OIDC settings: discovery, the identity token, the redirect URI, provider defaults |
+| `overlay-settings.test.mjs` | `overlay/etc/overleaf/overlay-modules.cjs`: which modules the environment switches on, the upload limit, the compile-container user |
+| `sandboxed-compiles-images.test.mjs` | the TeX Live image list of the sandboxed compiles |
+| `frontend-rebuild.test.mjs` | `overlay/services/web/config/settings.frontend.cjs`: the registry key the core frontend asks for, a path that resolves, and the marker the bundle check greps for |
+
+## Example documents
+
 | Example | What it verifies |
 | --- | --- |
 | `chinese-fonts` | the vendored Chinese fonts are registered with fontconfig (`SimSun`, `SimHei`, `FangSong`) |

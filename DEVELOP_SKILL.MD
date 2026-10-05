@@ -297,13 +297,31 @@ the project payload, while the AI assistant, the error assistant, the admin
 panel, the template gallery and the Git integrations all register their
 components there. `README.md` / `DEVELOP_EXPERIMENT.MD` §3 have the full list.
 
+**But the frontend is not frozen - it is a build step.** The image has the frontend
+sources, the webpack configs and the yarn cache; what it does not have is the
+webpack toolchain, which the base image prunes after its own build. `Dockerfile`
+therefore has an opt-in step (`--build-arg OVERLEAF_REBUILD_FRONTEND=true`) that
+restores the devDependencies, runs webpack against
+`overlay/services/web/config/settings.frontend.cjs` and prunes them again. Before
+porting a UI feature, decide whether it is worth turning that on - it makes the
+image build much longer and the bundle has to be regenerated on every upstream
+bump. The rule that matters: **webpack must be given `OVERLEAF_CONFIG`.** Without
+it webpack reads the base image's own registry, which is empty for every key
+except `full-project-search`, and produces an equally empty bundle **with a green
+build**.
+
 **Verify.** `grep -rn "overleafModuleImports" <the fork>/services/web/modules/<name>/`
 and `grep -rn "importOverleafModules('<key>')" <the fork>/services/web/frontend`.
-A non-empty result means the UI is not portable. Also read the module's own
+A non-empty result means the UI needs the registry filled at build time.
+`grep -rn "@/" <the fork>/services/web/modules/<name>/frontend` shows which core
+frontend files it needs - they must exist in the base image, and a missing one
+fails the webpack build rather than the page. Also read the module's own
 `index.mjs`: a feature whose module registers **no route, no hook and no
 setting** exists only to give the registry something to point at (the fork's
 `symbol-palette`, `python-runner` and `reference-picker` are like that), so
-adding it would change nothing at all.
+without the rebuild adding it would change nothing at all - and *with* the
+rebuild, `symbol-palette` is the smallest thing that proves the mechanism works
+end to end.
 
 ---
 

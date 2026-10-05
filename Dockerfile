@@ -508,3 +508,44 @@ RUN cd /overleaf/services/web \
            find "$dir" -name '*.pug' -exec sh -c 'rm -f "${1%.pug}.js"' _ {} \; ; \
          done; \
        })
+
+# ---------------------------------------------------------------------------
+# Optional: rebuild the frontend with the user interfaces of this overlay
+# ---------------------------------------------------------------------------
+# A module that brings its own user interface does not reach the browser through
+# a setting: its components are pulled into the webpack build by the Babel macro
+# `frontend/macros/import-overleaf-module.macro.js`, which reads
+# `Settings.overleafModuleImports` **while webpack runs**. The CE image has that
+# registry for every key, but empty, and prunes the webpack toolchain after its
+# own build (`genScript.js` ends its compile step with
+# `yarn workspaces focus --all --production`), so a module's UI can only be added
+# by doing here what upstream does in its own build:
+#
+#   1. restore the devDependencies (`yarn install`, from `.yarn/cache`),
+#   2. run webpack with a settings file that fills the registry
+#      (`config/settings.frontend.cjs` - **without** `OVERLEAF_CONFIG` webpack
+#      would read the image's own empty registry and produce an equally empty
+#      bundle, with a green build),
+#   3. prune the devDependencies again, so the running image is unchanged.
+#
+# It is off by default, because it is a real rebuild: it makes the image build
+# much longer, needs the yarn cache (or network), and the bundle has to be
+# regenerated on every upstream bump. Enable it with
+# `--build-arg OVERLEAF_REBUILD_FRONTEND=true`. See DEVELOP_EXPERIMENT.MD.
+#
+# Only the *frontend* is rebuilt; the backend modules are ordinary source files
+# and are switched on at runtime as usual (they still have to be listed in
+# `moduleImportSequence` for their routes to be registered).
+ARG OVERLEAF_REBUILD_FRONTEND=false
+RUN if [ "$OVERLEAF_REBUILD_FRONTEND" = "true" ]; then \
+      echo "rebuilding the frontend with the modules of this overlay" ; \
+      cd /overleaf/services/web && \
+      export CYPRESS_INSTALL_BINARY=0 && \
+      yarn install --immutable && \
+      OVERLEAF_CONFIG=/overleaf/services/web/config/settings.frontend.cjs \
+        yarn run webpack:production && \
+      yarn workspaces focus --all --production && \
+      touch /opt/overleaf-frontend-rebuilt ; \
+    else \
+      echo "the frontend is not rebuilt (pass --build-arg OVERLEAF_REBUILD_FRONTEND=true to do so)" ; \
+    fi

@@ -26,7 +26,8 @@ Compared to the official `sharelatex/sharelatex` image:
 - R with `knitr`, so `.Rnw` and `.Rtex` documents compile
 - additional TeX Live and system fonts, including a bundled collection of
   Chinese fonts (vendored in [`fonts/`](fonts/README.md), so nothing has to be
-  downloaded while building the image)
+  downloaded while building the image) and the font families
+  [Overleaf documents as usable through `fontspec`](https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F)
 - all TeX Live fonts are registered with fontconfig, so they can be selected by
   family name, and the Chinese fonts are installed under the names the TeX Live
   `zhmetrics` metrics (`uniyou20`, `unisong5b`, `gbkyou20`, ...) expect, see
@@ -45,6 +46,8 @@ Compared to the official `sharelatex/sharelatex` image:
 - **sandboxed compiles**: compile each project in its own TeX Live container,
   opt-in - see [Sandboxed compiles](#sandboxed-compiles)
 - **OIDC (OpenID Connect) single sign-on**, see below
+- the **symbol palette** in the editor source view, through the optional
+  frontend rebuild - see [Rebuilding the frontend](#rebuilding-the-frontend-optional)
 - a configurable upload limit and linked URLs, see
   [Environment variables](#environment-variables)
 
@@ -607,6 +610,40 @@ Check the log line the settings file prints at startup (`settings.overlay:`) -
 it names the modules that were switched on. If the line is missing entirely,
 `OVERLEAF_CONFIG` was overridden, which replaces the settings file of this image
 and with it the module registration.
+
+If the feature is one *whose user interface a module contributes* (the AI
+assistant, the error assistant, the admin panel, the template gallery, the Git
+integrations), it needs the optional frontend rebuild below - no setting can add
+a component to a bundle that was already built.
+
+## Rebuilding the frontend (optional)
+
+A module's components reach the browser through a build-time registry
+(`Settings.overleafModuleImports`, read by a Babel macro while webpack runs). The
+base image has that registry but leaves it empty, and prunes the webpack toolchain
+after its own build, so a feature like the symbol palette can only be added by
+rebuilding the frontend:
+
+```bash
+docker build --build-arg OVERLEAF_REBUILD_FRONTEND=true -t lvcs/sharelatex .
+```
+
+The step restores the devDependencies, runs webpack with
+[`overlay/services/web/config/settings.frontend.cjs`](overlay/services/web/config/settings.frontend.cjs),
+and prunes them again. It is **off by default**: it makes the build
+significantly longer, it needs the yarn cache or the network, and the generated
+bundle has to be regenerated whenever the base image moves. CI
+(`build-test.yml`) builds *with* it, so the path is tested even though the
+published image does not use it.
+
+What is in the rebuilt bundle today is the **symbol palette** - the smallest
+module whose entire effect is proof that the mechanism works. Adding another is
+the same three edits: copy the module into `overlay/services/web/modules/`, add
+its registry key to `settings.frontend.cjs`, and (for its backend routes) add it
+to `moduleImportSequence`. `DEVELOP_EXPERIMENT.MD` §3.2 records the details,
+including the two traps: webpack without `OVERLEAF_CONFIG` produces an equally
+empty bundle **with a green build**, and the AI assistant additionally needs a
+one-line import substitution plus an AI gateway to point at.
 
 ## Building the image
 
