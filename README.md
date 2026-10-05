@@ -661,7 +661,7 @@ Documented in the [OIDC section](#oidc-single-sign-on) above:
 | `WEB_SEARCH_URL` | the provider's own | Optional: endpoint of a self-hosted, Tavily-compatible search backend. |
 | `WEB_SEARCH_MAX_RESULTS` | `5` | Optional: how many results the *Web* tool returns. |
 | `WEB_SEARCH_DEPTH` | `basic` | Optional: search depth passed to the backend. |
-| `DOCS_MCP_URL` | Overleaf's own docs MCP endpoint | Optional: what the assistant's documentation search queries, as an MCP URL. |
+| `DOCS_MCP_URL` | Overleaf's own docs MCP endpoint | Optional: what the assistant's documentation search queries, as an MCP URL. Set it to an **empty string** to switch that tool off - unset means Overleaf's endpoint, empty means no documentation search. |
 | `EXTERNAL_AUTH` | empty | Optional, and only read by the admin panel: which external authentication methods to list on `/admin/user`, space separated (e.g. `oidc`). This image's own OIDC support does **not** need it - the panel just shows the methods you name. |
 | `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | The settings file of the container. It loads the one of the base image and extends it; **replacing it also removes the module registration of this image** - see [overlay/README.md](overlay/README.md). |
 

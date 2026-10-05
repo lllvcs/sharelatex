@@ -577,7 +577,7 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 | `WEB_SEARCH_URL` | 该后端自己的地址 | 可选：自建的、与 Tavily 兼容的搜索后端端点。 |
 | `WEB_SEARCH_MAX_RESULTS` | `5` | 可选：*Web* 工具返回多少条结果。 |
 | `WEB_SEARCH_DEPTH` | `basic` | 可选：传给后端的搜索深度。 |
-| `DOCS_MCP_URL` | Overleaf 自己的文档 MCP 端点 | 可选：助手的文档检索查询的是哪个地址，写成 MCP URL。 |
+| `DOCS_MCP_URL` | Overleaf 自己的文档 MCP 端点 | 可选：助手的文档检索查询的是哪个地址，写成 MCP URL。把它设为**空字符串**可以关掉这个工具——不设表示用 Overleaf 的端点，设为空表示不做文档检索。 |
 | `EXTERNAL_AUTH` | 空 | 可选，且只有管理面板会读：`/admin/user` 上要列出哪些外部认证方式，以空格分隔（例如 `oidc`）。本镜像自己的 OIDC 支持**不需要**它——面板只是把你写出的方式列出来。 |
 | `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | 容器的设置文件。它会加载并扩展基础镜像的那一份；**替换它同时也会移除本镜像的模块注册**——见 [overlay/README.md](overlay/README.md)。 |
 
