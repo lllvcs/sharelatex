@@ -45,9 +45,16 @@ Compared to the official `sharelatex/sharelatex` image:
   opt-in - see [Track changes](#track-changes-and-the-review-panel)
 - **sandboxed compiles**: compile each project in its own TeX Live container,
   opt-in - see [Sandboxed compiles](#sandboxed-compiles)
+- **AI assistant** (a chat panel in the editor that can read and edit the
+  project) and **error assistant** (a *Suggest fix* button on compile errors),
+  opt-in and needing an AI gateway - see [AI assistant](#ai-assistant)
+- **admin panel**: a user list and a project list for site administrators,
+  opt-in - see [Admin panel](#admin-panel)
 - **OIDC (OpenID Connect) single sign-on**, see below
-- the **symbol palette** in the editor source view, through the optional
-  frontend rebuild - see [Rebuilding the frontend](#rebuilding-the-frontend-optional)
+- the **symbol palette** in the editor source view and the **reference picker**
+  (citing from the project's `.bib` file, with a better reference index than the
+  base image's), through the optional frontend rebuild - see
+  [Rebuilding the frontend](#rebuilding-the-frontend-optional)
 - a configurable upload limit and linked URLs, see
   [Environment variables](#environment-variables)
 
@@ -450,6 +457,71 @@ services:
   only with `OVERLEAF_IS_SERVER_PRO=true`), so a mistyped image name surfaces on
   the first compile rather than at startup.
 
+## AI assistant
+
+Ported from [`ayaka-notes/ayakaleaf-pro`](https://github.com/ayaka-notes/ayakaleaf-pro).
+Two modules work together: **workbench** is the chat panel in the editor, and the
+**error assistant** puts a *Suggest fix* button on compile errors and proposes a
+patch. Both are switched on by the same variables, and both need the frontend to
+have been rebuilt ([Rebuilding the frontend](#rebuilding-the-frontend-optional)) -
+their user interfaces are compiled into the bundle, so without the rebuild the
+routes exist and nothing appears.
+
+```bash
+AI_ENABLED=true
+AI_BASE_URL=https://api.deepseek.com
+AI_API_KEY=sk-...
+AI_MODEL=deepseek-flash
+```
+
+- **The gateway has to speak the OpenAI chat-completions API** (`/chat/completions`).
+  That is what was verified against a DeepSeek gateway; `AI_BASE_URL` is the part
+  before `/chat/completions`, so `https://api.deepseek.com` and
+  `https://api.openai.com/v1` are both right.
+- `AI_MODEL` is whatever that gateway calls the model. A reasoning model works,
+  but it spends the first tokens of a reply on reasoning, so give it room:
+  `AI_MAX_STEPS`, `AI_TOKEN_QUOTA` and `AI_IMAGE_MODEL` are optional (see
+  [Environment variables](#environment-variables)).
+- **The key never leaves the container.** It is read from the environment into
+  the settings of the service and sent as a bearer token; it is not written to
+  the image, not logged, and **must not be put in `settings.overlay.cjs`** or any
+  other file that lands in the repository.
+- The assistant can read the project, and it edits only through a diff the user
+  has to approve.
+- Without the variables the modules are not loaded at all, so an instance that
+  does not want AI is byte-for-byte the instance it was before.
+
+One thing to know about the port: the module was written against
+`@ai-sdk/openai-compatible`, a package the base image has only in its lockfile but
+does not declare, which Yarn PnP refuses. `overlay/services/web/modules/workbench`
+uses the declared `@ai-sdk/openai` provider instead, with its `baseURL` pointed at
+the gateway - the same wire protocol, one import changed (see the comments in
+`WorkbenchAiClient.mjs` and `WorkbenchController.mjs`).
+
+## Admin panel
+
+Ported from the same project, opt-in:
+
+```bash
+OVERLEAF_ENABLE_ADMIN_TOOLS=true
+```
+
+It adds `/admin/user` (a searchable user list, with create/activate/delete/
+restore and per-user AI usage) and `/admin/project` (a project list, with trash,
+untrash, undelete and purge), both behind Overleaf's own
+`ensureUserIsSiteAdmin`. Its pages are webpack *entrypoints*, so they need the
+frontend rebuild as well.
+
+**Why it has to be loaded before `user-activate`.** The base image's
+`user-activate` module registers the same two paths this one does, `GET
+/user/activate` and `GET /admin/user`, and Express gives a path to whoever
+registers it first. `moduleImportSequence` is appended to by default, which would
+leave `/admin/user` with the base image's redirect to `/admin/register` and the
+Manage Users page unreachable. `overlay/etc/overleaf/overlay-modules.cjs`
+therefore inserts `admin-tools` *in front of* `user-activate`; nothing is dropped,
+and for the two shared paths the admin panel wins.
+`tests/overlay-settings.test.mjs` checks that order.
+
 ## Fonts
 
 The image contains every font of the TeX Live installation (`scheme-full`,
@@ -574,6 +646,15 @@ Documented in the [OIDC section](#oidc-single-sign-on) above:
 | `MAX_UPLOAD_SIZE` | `50` | Upload limit in **megabytes**. The limit at which a zip is refused because its contents would expand too far grows with it (it is six times the limit, and never below the 300 MB the official image allows). |
 | `ENABLED_LINKED_FILE_TYPES` | empty | Which linked-file types to offer, comma separated (`url`, `project_file`, `project_output_file`). With `url`, this image also configures the linked-URL proxy that the CE image runs but never points at, so that linked URLs work. |
 | `LINKED_URL_PROXY_HOST` | `127.0.0.1` | Host of the linked-URL proxy, for a setup in which the services run in separate containers. |
+| `OVERLEAF_ENABLE_ADMIN_TOOLS` | `false` | Set to `true` to switch on the admin panel: a user list and a project list at `/admin/user` and `/admin/project`, for site administrators. See [Admin panel](#admin-panel). |
+| `AI_ENABLED` | `false` | Set to `true` to switch on the AI assistant and the error assistant. Needs `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` as well; without them the panel appears but every request fails. See [AI assistant](#ai-assistant). |
+| `AI_BASE_URL` | – | The gateway the AI features talk to, e.g. `https://api.deepseek.com` or `https://api.openai.com/v1`. It has to speak the OpenAI **chat completions** API. |
+| `AI_API_KEY` | – | Key for that gateway. It is sent as a `Authorization: Bearer` header and is never logged. |
+| `AI_MODEL` | – | Model used for the chat and for error suggestions, e.g. `deepseek-flash`. |
+| `AI_IMAGE_MODEL` | – | Optional: a model on the same gateway for conversations that contain images. |
+| `AI_MAX_STEPS` | `20` | Optional: how many tool calls one user message may cause, across requests. |
+| `AI_PROXY_URL` | – | Optional: route the gateway calls through an HTTP proxy. |
+| `AI_TOKEN_QUOTA` | – | Optional: token budget per user and period; `AI_TOKEN_QUOTA_PERIOD` is `month` (default) or `day`. |
 | `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | The settings file of the container. It loads the one of the base image and extends it; **replacing it also removes the module registration of this image** - see [overlay/README.md](overlay/README.md). |
 
 ## Troubleshooting

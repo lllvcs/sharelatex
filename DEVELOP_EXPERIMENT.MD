@@ -290,6 +290,45 @@ integrations. Two things to know before that:
   `/admin/register`, and because the module sequence can only be appended to,
   `user-activate` wins.
 
+### 3.3 Porting what that unblocked
+
+Once the rebuild was proved, three of those features were ported. What each one
+actually cost, measured against the image rather than read off the source tree:
+
+| | AI assistant (`workbench` + `error-assistant`) | Admin panel (`admin-tools`) | Reference picker (`reference-picker`) |
+| --- | --- | --- | --- |
+| source files | 34 + 14 | 117 | 8 |
+| core `@/` imports, and how many are missing | 36 + 14, **0 missing** | 48, **0 missing** | 15, **0 missing** |
+| npm packages not declared | `@ai-sdk/openai-compatible` | none | none |
+| how its UI reaches the browser | 7 registry keys | 2 webpack **page entrypoints** (`globSync` picks them up on its own) | 3 registry keys |
+| other work | one import substitution; `workbench` before `error-assistant` | inserted **before** `user-activate` | none |
+| needs a service | an AI gateway | none | none |
+| needs the rebuild | yes | yes | yes |
+
+Three things are worth recording because they were not obvious:
+
+- **The `@/` imports were the real risk, and they were fine.** The earlier
+  analysis of `admin-tools` could only say "some of its `@/...` imports may be
+  Pro-only core frontend files, not verifiable from here"; checking all 48 against
+  the image (`.research/`-style script, run inside the container) answered it in
+  one pass. The remaining risk was never the *core* frontend - it is the same code
+  in both products - but the *modules*, which the CE image removes.
+- **The AI provider substitution is real but small.** `workbench` imports
+  `createOpenAICompatible` from a package the image has only in its lockfile, so
+  PnP refuses it and - because modules are imported with `await import()` - the
+  web service would not start. The declared `@ai-sdk/openai` speaks the same wire
+  protocol; the difference is which API a bare provider call resolves to
+  (`/responses` rather than `/chat/completions`), which is why the one call site
+  uses `.chat(...)`. Verified against a real gateway before the port was written,
+  and again afterwards through the module's own code path.
+- **`reference-picker` is the cheapest feature in the whole repository.** The base
+  image's core already ships the BibTeX parser, the editor's BibTeX language, the
+  "root bib document" and "reference format" settings, and a *basic* reference
+  index - and it already calls `importOverleafModules('referenceIndices')` for a
+  better one. The module supplies the other three registry entries and nothing
+  else; its `index.mjs` is an empty object, so it is not in
+  `moduleImportSequence` at all.
+
 ---
 
 ## 4. Track changes and the review panel
@@ -673,6 +712,23 @@ drives the track-changes router against a stub, checks the settings file both
 with and without the features switched on, validates the seccomp profile, checks
 the TeX Live settings and the latexmk custom dependencies, runs `run-chktex.sh`,
 and compiles the views.
+
+### 7.1 What the three ported features are checked against
+
+The AI assistant, the admin panel and the reference picker were ported after the
+frontend rebuild had been proved (§3.2), and each is checked where it can fail:
+
+| Feature | The check that would catch a regression |
+| --- | --- |
+| all three | `tests/verify-overlay.sh` imports every ported module's `index.mjs` inside the image and applies its router against a stub, which resolves the whole import graph - the thing that stops the web service from booting if a dependency is missing |
+| all three | it also greps `public/js` for a string unique to each feature's components (`symbol-palette-close-button-outer`, `references-search-modal`, `workbench-ai-message`). A string the *core* also contains would make this meaningless, so each was checked against the image's own `frontend/` first - `ai-paywall-notification` looks distinctive and lives in three core files, which is why it is not one of them |
+| the registry | `tests/frontend-rebuild.test.mjs` resolves every path in `settings.frontend.cjs`, checks the keys the core asks for, and checks that the marker strings are still in the components - the two halves fail in opposite directions |
+| the module order | `tests/overlay-settings.test.mjs` asserts that `admin-tools` is inserted *before* `user-activate` (both register `/admin/user`, first registration wins) and that `workbench` precedes `error-assistant` |
+| the AI gateway | verified once by hand against a DeepSeek gateway before the port was written: `createOpenAI({ baseURL, apiKey })` with `.chat(model)` answers and reports token usage, which is what `TokenQuota` needs. This is not in CI - it needs a key |
+
+What is still only verifiable by hand, and was not verified: that the AI panel
+renders and streams in a browser, that the admin panel's pages load, and that the
+reference picker's modal opens. All three need a running instance.
 
 ---
 

@@ -91,6 +91,16 @@ not count: PnP only allows what the importing package declares, which is why
 `@ai-sdk/openai-compatible` blocks the AI modules even though it is in the
 lockfile.
 
+**When an undeclared package is the only blocker, substitute rather than add.**
+The AI modules import `createOpenAICompatible` from that undeclared package; the
+declared `@ai-sdk/openai` speaks the same wire protocol, so one import changed and
+one call site now asks for the chat-completions API (`getProvider().chat(...)`)
+instead of relying on what a bare provider call resolves to (`/responses`). Two
+rules for such a substitution: say in a comment *why* the import differs from the
+upstream module, so the next person does not "fix" it back; and verify it against
+the real service, because two provider factories that look interchangeable differ
+in more than their name.
+
 ---
 
 ## S3. Only a vouched-for email address may identify an account
@@ -282,6 +292,17 @@ That second trap is why the fork's `learn` module, which caches an entire wiki a
 import time, is the one rejected candidate that would otherwise have worked
 (`DEVELOP_EXPERIMENT.MD` §3).
 
+**And the order is sometimes the whole feature.** Appending is the default because
+it cannot drop an entry a later base image adds, but a module that registers a
+route the base image already registers loses silently: Express gives a path to
+whoever registers it first. `admin-tools` and the base image's `user-activate`
+both register `GET /admin/user`, so appending would leave the admin panel
+unreachable behind the base image's redirect, with no error anywhere. When a
+ported module shares a path with one in the sequence, insert it in front
+(`MODULE_PLACEMENT` in `overlay-modules.cjs`) and assert the relative order in
+the test — and check for a shared path by grepping both routers for
+`webRouter.(get|post|delete)`, not by reading one of them.
+
 ---
 
 ## S14. Check the frontend registry before porting a feature
@@ -312,18 +333,19 @@ it webpack reads the base image's own registry, which is empty for every key
 except `full-project-search`, and produces an equally empty bundle **with a green
 build**.
 
-**Verify.** `grep -rn "overleafModuleImports" <the fork>/services/web/modules/<name>/`
-and `grep -rn "importOverleafModules('<key>')" <the fork>/services/web/frontend`.
-A non-empty result means the UI needs the registry filled at build time.
-`grep -rn "@/" <the fork>/services/web/modules/<name>/frontend` shows which core
-frontend files it needs - they must exist in the base image, and a missing one
-fails the webpack build rather than the page. Also read the module's own
-`index.mjs`: a feature whose module registers **no route, no hook and no
-setting** exists only to give the registry something to point at (the fork's
-`symbol-palette`, `python-runner` and `reference-picker` are like that), so
-without the rebuild adding it would change nothing at all - and *with* the
-rebuild, `symbol-palette` is the smallest thing that proves the mechanism works
-end to end.
+**Verify.** `grep -rn "@/" <the module>/frontend` shows which core frontend files
+it needs - they must exist in the base image, and a missing one fails the webpack
+build rather than the page (checking all 48 of `admin-tools` against the image
+took one pass and cleared the biggest unknown of that port). Then, for each key
+the core asks for, decide how the module's UI arrives: a **registry key**, which
+has to be filled in `settings.frontend.cjs`, or a **webpack page entrypoint**
+under `frontend/js/pages/`, which `webpack.config.js` collects with a `globSync`
+and needs no registry entry at all - `admin-tools` is the second kind and needed
+none. Also read the module's own `index.mjs`: a feature whose module registers
+**no route, no hook and no setting** exists only to give the registry something to
+point at (the fork's `symbol-palette`, `python-runner` and `reference-picker` are
+like that), so it does **not** belong in `moduleImportSequence` - naming it there
+registers nothing - and it reaches the browser only through the rebuild.
 
 ---
 

@@ -44,16 +44,27 @@ echo "== the settings file of this image is complete =="
 # Every service reads /etc/overleaf/settings.overlay.cjs (OVERLEAF_CONFIG), so a
 # mistake in it stops the container before anything is logged about it.
 OVERLEAF_ENABLE_TRACK_CHANGES=true SANDBOXED_COMPILES=true \
+OVERLEAF_ENABLE_ADMIN_TOOLS=true AI_ENABLED=true \
 ALL_TEX_LIVE_DOCKER_IMAGES='ghcr.io/ayaka-notes/texlive-full:2026.1' \
 TEX_LIVE_DOCKER_IMAGE='ghcr.io/ayaka-notes/texlive-full:2026.1' \
 MAX_UPLOAD_SIZE=120 \
 node -e "
 const settings = require('/etc/overleaf/settings.overlay.cjs')
-for (const name of ['track-changes', 'sandboxed-compiles']) {
+for (const name of ['track-changes', 'sandboxed-compiles', 'admin-tools', 'workbench', 'error-assistant']) {
   if (!settings.moduleImportSequence.includes(name)) throw new Error(name + ' is not in moduleImportSequence: ' + JSON.stringify(settings.moduleImportSequence))
 }
 for (const name of ['history-v1', 'launchpad', 'server-ce-scripts', 'user-activate']) {
   if (!settings.moduleImportSequence.includes(name)) throw new Error(name + ' was dropped from moduleImportSequence: ' + JSON.stringify(settings.moduleImportSequence))
+}
+// admin-tools and user-activate both register /admin/user and /user/activate, and
+// the first registration wins, so admin-tools has to be in front of user-activate
+// or the Manage Users page is unreachable behind the base image's redirect.
+if (settings.moduleImportSequence.indexOf('admin-tools') > settings.moduleImportSequence.indexOf('user-activate')) {
+  throw new Error('admin-tools has to be loaded before user-activate: ' + JSON.stringify(settings.moduleImportSequence))
+}
+// error-assistant imports a permission middleware from workbench.
+if (settings.moduleImportSequence.indexOf('workbench') > settings.moduleImportSequence.indexOf('error-assistant')) {
+  throw new Error('workbench has to be loaded before error-assistant: ' + JSON.stringify(settings.moduleImportSequence))
 }
 if (settings.maxUploadSize !== 120 * 1024 * 1024) throw new Error('maxUploadSize is ' + settings.maxUploadSize)
 if (!settings.mongo || !settings.mongo.url) throw new Error('the settings of the base image were lost')
@@ -150,6 +161,33 @@ try {
     TEX_LIVE_DOCKER_IMAGE: 'ghcr.io/ayaka-notes/texlive-full:2026.1',
   })
   if (config.imageRoot !== 'ghcr.io/ayaka-notes') throw new Error('the image root is ' + config.imageRoot)
+
+  // The modules that were ported from ayakaleaf-pro. Importing each one resolves
+  // its whole graph, which is the check that matters: the service loads the
+  // sequence with `await import()`, so one module whose imports do not resolve
+  // stops the web service from starting at all. workbench is the interesting one
+  // - it was written against `@ai-sdk/openai-compatible`, which this image does
+  // not declare, so its provider import is substituted (see
+  // modules/workbench/app/src/WorkbenchAiClient.mjs).
+  const adminTools = (await import('./modules/admin-tools/index.mjs')).default
+  const adminRoutes = []
+  adminTools.router.apply({ post: p => adminRoutes.push(p), get: p => adminRoutes.push(p), delete: p => adminRoutes.push(p) })
+  for (const route of ['/admin/user', '/admin/project', '/user/activate']) {
+    if (!adminRoutes.includes(route)) throw new Error('admin-tools does not register ' + route)
+  }
+
+  const workbench = (await import('./modules/workbench/index.mjs')).default
+  if (!workbench || !workbench.router) throw new Error('workbench has no router')
+  const { isConfigured, getProvider } = await import('./modules/workbench/app/src/WorkbenchAiClient.mjs')
+  if (typeof isConfigured !== 'function' || typeof getProvider !== 'function') throw new Error('the AI client is incomplete')
+
+  const errorAssistant = (await import('./modules/error-assistant/index.mjs')).default
+  const errorRoutes = []
+  errorAssistant.router.apply({ post: p => errorRoutes.push(p), get: p => errorRoutes.push(p) })
+  if (!errorRoutes.some(r => r.includes('suggest-fix'))) throw new Error('error-assistant does not register the suggest-fix route')
+
+  const instanceFeatures = (await import('./modules/instance-features/index.mjs')).default
+  if (!instanceFeatures || !instanceFeatures.router) throw new Error('instance-features has no router')
 
   fs.writeSync(1, 'overlay modules OK\n')
   process.exit(0)
@@ -305,16 +343,28 @@ for (const name of ['bootstrap', 'pages/ide', 'pages/project-list', 'marketing']
 }
 console.log('  the rebuilt manifest has ' + entrypoints.length + ' entrypoints, including the core ones')
 " || exit 1
-  # The marker is a CSS class of the symbol-palette component. CSS is extracted
-  # into public/stylesheets, so finding it in public/js means the module's own
-  # JavaScript was bundled.
-  grep -rlq 'symbol-palette-close-button-outer' public/js || {
-    echo "ERROR: the frontend was rebuilt but the symbol palette component is not in public/js." ; \
+  # Each marker is a string that occurs only in that module's own frontend (and
+  # not in the core, which would make the check meaningless). CSS is extracted
+  # into public/stylesheets, so finding one in public/js means the module's
+  # JavaScript was bundled - which is what the registry in
+  # overlay/services/web/config/settings.frontend.cjs decides at build time.
+  # tests/frontend-rebuild.test.mjs checks the other direction: that these exact
+  # strings are still in those components.
+  missing=0
+  for marker in symbol-palette-close-button-outer references-search-modal workbench-ai-message ; do
+    if grep -rlq "$marker" public/js ; then
+      echo "  in the bundle: $marker"
+    else
+      echo "  MISSING from the bundle: $marker"
+      missing=$((missing + 1))
+    fi
+  done
+  if [ "$missing" != 0 ] ; then
+    echo "ERROR: the frontend was rebuilt but $missing of the module components are not in public/js." ; \
     echo "       Was OVERLEAF_CONFIG set for the webpack run? Without it, webpack reads the" ; \
     echo "       empty registry of the base image and produces an equally empty bundle." ; \
     exit 1 ; \
-  }
-  echo "  the symbol palette component is in the bundle"
+  fi
 fi
 
 echo "overlay checks passed"

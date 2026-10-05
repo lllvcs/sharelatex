@@ -23,16 +23,67 @@
 
 const Path = require('node:path')
 
+/** Resolve a module's frontend file against the image layout. */
+const module_ = (...parts) => Path.resolve(__dirname, '../modules', ...parts)
+
 module.exports = {
   overleafModuleImports: {
-    // Where the editor's symbol palette gets its component from
-    // (`frontend/js/features/ide-react/components/editor/symbol-palette-pane.tsx`
-    // renders whatever is registered under this key).
+    // ---------------------------------------------------------------------
+    // The editor's symbol palette
+    // ---------------------------------------------------------------------
+    // `frontend/js/features/ide-react/components/editor/symbol-palette-pane.tsx`
+    // renders whatever is registered under this key.
     sourceEditorSymbolPalette: [
-      Path.resolve(
-        __dirname,
-        '../modules/symbol-palette/frontend/js/components/symbol-palette'
-      ),
+      module_('symbol-palette/frontend/js/components/symbol-palette'),
+    ],
+
+    // ---------------------------------------------------------------------
+    // The reference picker: citing from the .bib file
+    // ---------------------------------------------------------------------
+    // The base image's core already ships the reference machinery - the BibTeX
+    // parser, the editor's BibTeX language, the "root bib document" and
+    // "reference format" settings, and a `basic-reference-index` - and it calls
+    // `importOverleafModules('referenceIndices')` for a better one. Empty means
+    // the basic index and no picker; these three entries are what the fork adds
+    // on top, and they are why its BibTeX support is more than the base image's.
+    referenceIndices: [
+      module_('reference-picker/frontend/js/reference-index/advanced-reference-index'),
+    ],
+    mainEditorLayoutModals: [
+      module_('reference-picker/frontend/js/components/reference-picker-controller'),
+    ],
+    autoCompleteExtensions: [
+      module_('reference-picker/frontend/js/extensions/reference-picker-keybinding'),
+    ],
+
+    // ---------------------------------------------------------------------
+    // The AI assistant (workbench) and the error assistant
+    // ---------------------------------------------------------------------
+    // `workbench` is the chat panel in the editor's rail; `error-assistant`
+    // adds the "suggest a fix" button to the compile log and a panel that
+    // proposes changes. Both are backend + frontend modules, and the frontend
+    // half reaches the browser through these keys.
+    //
+    // The AI half needs a gateway to do anything: AI_ENABLED, AI_BASE_URL,
+    // AI_API_KEY and AI_MODEL (see README.md).
+    rootContextProviders: [
+      module_('workbench/frontend/js/context/workbench-settings-context'),
+    ],
+    mainEditorLayoutPanels: [
+      module_('workbench/frontend/js/components/workbench-dock'),
+    ],
+    railEntries: [module_('workbench/frontend/js/workbench-rail-entry')],
+    sourceEditorExtensions: [
+      module_('error-assistant/frontend/js/extensions/previous-fix'),
+    ],
+    pdfLogEntryHeaderActionComponents: [
+      module_('error-assistant/frontend/js/components/suggest-fix-button'),
+    ],
+    pdfLogEntryComponents: [
+      module_('error-assistant/frontend/js/components/error-assistant'),
+    ],
+    pdfLogEntriesComponents: [
+      module_('error-assistant/frontend/js/components/previous-fix-entry'),
     ],
   },
 }

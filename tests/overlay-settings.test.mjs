@@ -63,12 +63,29 @@ test('each feature has its own switch', () => {
   assert.deepEqual(enabledModules({ SANDBOXED_COMPILES: 'true' }), [
     'sandboxed-compiles',
   ])
+  assert.deepEqual(enabledModules({ OVERLEAF_ENABLE_ADMIN_TOOLS: 'true' }), [
+    'admin-tools',
+  ])
+  // workbench before error-assistant: error-assistant imports a permission
+  // middleware from workbench, and the sequence is walked in order.
+  assert.deepEqual(enabledModules({ AI_ENABLED: 'true' }), [
+    'workbench',
+    'error-assistant',
+  ])
   assert.deepEqual(
     enabledModules({
       OVERLEAF_ENABLE_TRACK_CHANGES: 'true',
       SANDBOXED_COMPILES: 'true',
+      OVERLEAF_ENABLE_ADMIN_TOOLS: 'true',
+      AI_ENABLED: 'true',
     }),
-    ['track-changes', 'sandboxed-compiles']
+    [
+      'track-changes',
+      'sandboxed-compiles',
+      'admin-tools',
+      'workbench',
+      'error-assistant',
+    ]
   )
 })
 
@@ -76,6 +93,8 @@ test('only the exact value true switches a feature on', () => {
   for (const value of ['True', 'TRUE', '1', 'yes', 'on', 'false', '']) {
     assert.deepEqual(enabledModules({ OVERLEAF_ENABLE_TRACK_CHANGES: value }), [])
     assert.deepEqual(enabledModules({ SANDBOXED_COMPILES: value }), [])
+    assert.deepEqual(enabledModules({ OVERLEAF_ENABLE_ADMIN_TOOLS: value }), [])
+    assert.deepEqual(enabledModules({ AI_ENABLED: value }), [])
   }
 })
 
@@ -96,11 +115,54 @@ test('an enabled module is appended, not put in front', () => {
   )
 })
 
+test('admin-tools is inserted before user-activate, not appended', () => {
+  // Both register GET /user/activate and GET /admin/user, and Express gives a
+  // path to whoever registers it first. Appending would leave /admin/user with
+  // the base image's redirect to /admin/register, so the Manage Users page would
+  // be unreachable. Nothing is dropped: user-activate keeps its other routes.
+  const sequence = withOverlayModules(CE_MODULE_SEQUENCE, {
+    OVERLEAF_ENABLE_ADMIN_TOOLS: 'true',
+  })
+  assert.deepEqual(sequence, [
+    'history-v1',
+    'launchpad',
+    'server-ce-scripts',
+    'admin-tools',
+    'user-activate',
+  ])
+  assert.ok(
+    sequence.indexOf('admin-tools') < sequence.indexOf('user-activate'),
+    'admin-tools has to come first'
+  )
+  assert.ok(sequence.includes('user-activate'), 'user-activate must not be dropped')
+})
+
+test('the insertion still keeps a module a later base image adds', () => {
+  const sequence = withOverlayModules(
+    [...CE_MODULE_SEQUENCE, 'something-new'],
+    { OVERLEAF_ENABLE_ADMIN_TOOLS: 'true' }
+  )
+  assert.deepEqual(sequence, [
+    'history-v1',
+    'launchpad',
+    'server-ce-scripts',
+    'admin-tools',
+    'user-activate',
+    'something-new',
+  ])
+})
+
+test('the AI modules are appended in dependency order', () => {
+  assert.deepEqual(
+    withOverlayModules(CE_MODULE_SEQUENCE, { AI_ENABLED: 'true' }),
+    [...CE_MODULE_SEQUENCE, 'workbench', 'error-assistant']
+  )
+})
+
 test('a module the base image already loads is not added twice', () => {
   assert.deepEqual(
     withOverlayModules([...CE_MODULE_SEQUENCE, 'track-changes'], {
-      OVERLEAF_ENABLE_TRACK_CHANGES: 'true',
-    }),
+      OVERLEAF_ENABLE_TRACK_CHANGES: 'true',    }),
     [...CE_MODULE_SEQUENCE, 'track-changes']
   )
 })

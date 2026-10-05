@@ -39,6 +39,16 @@ const FALLBACK_MODULE_IMPORT_SEQUENCE = [
 /**
  * The modules of this overlay that the environment asks for, in load order.
  *
+ * The order matters twice over: `workbench` has to be loaded before
+ * `error-assistant`, which imports a permission middleware from it, and
+ * `admin-tools` has to be loaded before the base image's `user-activate` (see
+ * `MODULE_PLACEMENT`), which is why it is inserted rather than appended.
+ *
+ * `reference-picker` is deliberately absent: its `index.mjs` is an empty object -
+ * everything it is lives in the frontend, through the registry - so naming it in
+ * the sequence would register nothing. It reaches the browser because the
+ * frontend rebuild compiles it, and that is decided at image build time.
+ *
  * @param {Record<string, string | undefined>} env
  * @returns {string[]}
  */
@@ -50,13 +60,37 @@ function enabledModules(env) {
   if (env.SANDBOXED_COMPILES === 'true') {
     modules.push('sandboxed-compiles')
   }
+  if (env.OVERLEAF_ENABLE_ADMIN_TOOLS === 'true') {
+    modules.push('admin-tools')
+  }
+  if (env.AI_ENABLED === 'true') {
+    // workbench first: error-assistant imports its permission middleware.
+    modules.push('workbench', 'error-assistant')
+  }
   return modules
+}
+
+/**
+ * Where a module has to sit in the sequence rather than at its end.
+ *
+ * `admin-tools` registers the same two paths the base image's `user-activate`
+ * does - `GET /user/activate` and `GET /admin/user` - and Express gives the path
+ * to whoever registers it first. Appending `admin-tools` would therefore leave
+ * `/admin/user` with the base image's redirect to `/admin/register` and the
+ * Manage Users page unreachable, so it is inserted *before* `user-activate`
+ * instead. Nothing is dropped: both modules keep their routes, and for the two
+ * paths they share the admin one wins.
+ *
+ * @type {Record<string, { before: string }>}
+ */
+const MODULE_PLACEMENT = {
+  'admin-tools': { before: 'user-activate' },
 }
 
 /**
  * Append the enabled modules to the sequence the image ships, without
  * duplicating a name that is already in it and without dropping an entry that a
- * future base image adds.
+ * future base image adds (or one this image inserts in front of it).
  *
  * @param {string[] | undefined} sequence the sequence from the base image
  * @param {Record<string, string | undefined>} env
@@ -65,8 +99,15 @@ function enabledModules(env) {
 function withOverlayModules(sequence, env) {
   const result = Array.isArray(sequence) ? [...sequence] : []
   for (const module of enabledModules(env)) {
-    if (!result.includes(module)) {
+    if (result.includes(module)) {
+      continue
+    }
+    const placement = MODULE_PLACEMENT[module]
+    const index = placement ? result.indexOf(placement.before) : -1
+    if (index === -1) {
       result.push(module)
+    } else {
+      result.splice(index, 0, module)
     }
   }
   return result
