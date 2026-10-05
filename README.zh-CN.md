@@ -439,6 +439,10 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
   都存在，而且每个软件包都针对这两者核对过。`fonts-ubuntu` 被**刻意**排除在外——
   安装它可能改变未指定字体的文档的渲染结果，而构建过程会打印 `serif`、`sans-serif`
   与 `monospace` 实际解析成哪个字体，好让这种变化能被看见。
+  Overleaf 列出而**没有**发行版打包的那些字体族——其中包括 *Merriweather*、*Raleway*、
+  *Oswald*、*Open Sans Condensed*、*Source Sans Pro* 与 *PT Sans*——因此仍然缺失；
+  像内置中文字体集合那样把它们内置进 [`fonts/`](fonts/README.md)，就能在不做构建期
+  下载的前提下补上这个缺口。
 - `tests/fonts-zhmetrics`、`tests/fonts-by-name` 与 `tests/fonts-extra` 分别是这三条
   路线（度量、按族名使用 TeX Live 字体、按族名使用已安装的字体）的示例，CI 会在
   镜像内实际编译它们。

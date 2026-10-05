@@ -191,7 +191,7 @@ The consequences are what make the ports possible:
 
 ### 3.1 What only the image could settle
 
-Three of the overlay's assumptions were checked against the published image
+Five of the overlay's assumptions were checked against the published image
 rather than against the source tree, and one of them was wrong:
 
 | Assumption | Result |

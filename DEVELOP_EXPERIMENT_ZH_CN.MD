@@ -98,12 +98,55 @@ Overleaf 把后端以普通 ESM 源码形式放在镜像里（`app/src/**/*.mjs`
   | AI 助手（workbench）、错误助手、管理面板、模板库、Git bridge、GitHub 同步、Zotero/Mendeley、个人访问令牌、open-in-overleaf | 组件是登记在 `overleafModuleImports` 里的模块前端文件——**不在打包产物中**，所以功能触达不到 |
   | 符号面板、Python runner、reference picker | 模块*本身就是*前端：它们的 `index.mjs` 不注册任何路由、钩子或设置，存在的唯一意义是给注册表一个可以指向的东西。加进来等于什么都没改 |
   | `learn`（文档镜像） | 纯后端，且 import 都能解析，因此是被否决的候选中唯一*本来能跑*的——但该模块会在**服务器启动期间**抓取并缓存上游 wiki 的全部页面，没有超时，而且是在开始接受请求之前 |
-  | LDAP、该分支自带的 OIDC 模块 | 还额外被挡住：`ldapjs` 与 `passport-openidconnect` 并未被 `@overleaf/web` 声明，PnP 会拒绝该 import，整个 web 服务都起不来 |
+  | LDAP、该分支自带的 OIDC 模块 | **不移植，既是约束也是决定。** 两者还额外被挡住（`ldapjs` 与 `passport-openidconnect` 并未被 `@overleaf/web` 声明，PnP 会拒绝该 import，整个 web 服务都起不来），但这个决定本身就站得住：本分支的 OIDC 支持才是这里实际在用、并且经过加固的那一套（§6），而那个分支的模块会注册*第二个* `oidc` 策略，自带 `/oidc/login` 路由和自己的 `Settings.oauthProviders`，它会与 `/login/oidc` 冲突，而不是扩展它 |
   | `authentication/saml` | 可以解析——`@node-saml/passport-saml` 已被声明且有 patch——但它自带一套登录/登出路由，会与 OIDC overlay 的冲突；而且该分支依赖的 `@node-saml/node-saml` patch 在本镜像里*没有*应用，所以上线前无法验证其行为 |
   | `login-register` 的 `@domain` 注册限制 | 该模块整体替换了登录与注册页面，而本分支已经为 OIDC 替换过它们；其中只有「注册仅限某个邮箱域名」这一项检查能带来增量，而它应当放进核心注册控制器，而不是再造第二套 |
 
-  AI 这一例值得完整记下来，因为它正是最多人问的那个：镜像*确实*声明了 `ai@6`、`@ai-sdk/openai`、`@ai-sdk/google-vertex`、`@ai-sdk/mcp` 与 `zod`，所以在替换掉一个 import（`@ai-sdk/openai-compatible` 里的 `createOpenAICompatible`，而它只是一个传递依赖）之后，后端是能跑起来的。但它依然触达不到，因为聊天面板、错误助手组件以及触发它们的编辑器扩展都被编译进了打包产物。如果本仓库哪天加上了前端构建步骤，那就是转折点。
+  AI 这一例值得完整记下来，因为它正是最多人问的那个：镜像*确实*声明了 `ai@6`、`@ai-sdk/openai`、`@ai-sdk/google-vertex`、`@ai-sdk/mcp` 与 `zod`，所以在替换掉一个 import（`@ai-sdk/openai-compatible` 里的 `createOpenAICompatible`，而它只是一个传递依赖）之后，后端是能跑起来的。但它依然触达不到，因为聊天面板、错误助手组件以及触发它们的编辑器扩展都被编译进了打包产物。
+
+  **「前端是冻结的」到底冻到哪一步——实测。** 镜像是直接从 registry 读取的（方法记录在
+  `.research/image-inspection/`），而答案比「UI 不见了」更有意思：
+
+  | 内容 | 在镜像里吗？ |
+  | --- | --- |
+  | `services/web/frontend/`（整个 UI 源码） | 在，2367 个条目 |
+  | `webpack.config*.js`、`frontend/macros/import-overleaf-module.macro.js` | 在 |
+  | `public/js/*.js` 与 `public/manifest.json`（打包产物） | 在 |
+  | `overleaf/.pnp.cjs` | 在，1.19 MB |
+  | 那份 PnP 映射里的 webpack **工具链** | **不在**——构建之后 devDependencies 被裁掉了（`genScript.js` 的编译步骤以 `yarn workspaces focus --all --production` 结尾） |
+  | 那些被裁掉的包的 **yarn 缓存** | 大体上在（2829 个 zip，包含 webpack 的各个 loader 与 `@babel/*`） |
+
+  而打包产物自己的 `public/manifest.json` 有 41 个 entrypoint，其中恰好两个属于模块
+  （`modules/launchpad/pages/launchpad`、`modules/user-activate/pages/user-activate-page`）。
+  所以那些功能的 UI 确实不在镜像里，而在**不重新构建**的前提下把它打开，得到的并不是
+  一个空白页面——`ExpressLocals.getWebpackAssets()` 会去索引
+  `webpackManifest.entrypoints[entrypoint].assets`，于是一个未知的 entrypoint 就是一个
+  **HTTP 500**，这比功能缺席更糟。
+
+  重新构建是可行的，上游就是这么做的：
+  `OVERLEAF_CONFIG=<一份把注册表填好的设置文件> yarn run
+  webpack:production`，前提是先用 `yarn install` 从缓存里把 devDependencies 恢复回来。
+  代价是：镜像构建时间大幅拉长、打包产物每次上游升级都要重新生成，而且——专就 AI 模块
+  而言——还要替换一处 import，再加一个要指向的 AI 网关。它也很容易悄无声息地做错：
+  不带 `OVERLEAF_CONFIG` 跑 webpack，读到的就是镜像自己那份全空的注册表，于是产出
+  一份同样空的打包产物，**而构建仍然是绿的**。如果本仓库哪天真的接手前端重建，那就是
+  转折点；这不是 overlay 能做的事。
 - **模块列表里的顺序很关键。** 该序列是用 `await import()` 逐个走的，因此只要有一个模块的 import 解析不了，`loadModules()` 就会中断，web 服务根本起不来。只能加入已知能解析的模块。
+
+### 3.1 只有镜像本身才能定论的事
+
+overlay 的假设里有五条是拿**已发布镜像**（而不是源码树）核对的，其中一条是错的：
+
+| 假设 | 结果 |
+| --- | --- |
+| 编译 runner 是 `DockerRunner.js`，而且 clsi 检查的是同一个名字 | 确认——`CommandRunner.js` import 它，`config/settings.defaults.cjs:133` 会 stat 它，而这两个文件都不在镜像里 |
+| `/usr/local/share/latexmk/LatexMk` 是三行桩文件 | 确认（125 字节），所以替换它是纯获益 |
+| `qpdf` 与 `time` 已经装好，而 `ghostscript`/`Rscript`/`gnuplot`/`chktex`/`inkscape`/`lilypond` 没有 | 确认 |
+| TeX Live 位于 `/usr/local/texlive/<year>`，`/usr/share/fonts` 里只有 DejaVu | 确认（2026） |
+| **`server-ce/config/env.sh` 会为兄弟编译设置 `TEXLIVE_IMAGE_USER`** | **对 6.3.0 来说是错的。** 镜像里的 `env.sh`（383 字节）只有那几个 `*_HOST` 导出；那段分支存在于 `main`，不在这里。于是 clsi 会以 `tex`（uid 1000）启动编译容器，而编译目录属于 `www-data`（uid 33），每次沙箱编译都会因权限错误失败。overlay 现在自行设置 `Settings.clsi.docker.user` |
+
+最后一行正是这次下载镜像去做检查的价值所在：这是一个只有在真实部署里、挂载了 socket、
+真正跑一次编译时才会暴露的失败。
 
 ---
 
@@ -163,7 +206,38 @@ CE 镜像装好 TeX Live 后，把 latexmk 指向 `/usr/local/share/latexmk/Late
 - **字体缓存。** 如果构建期不做 `luaotfload-tool --update`，新容器里的第一次 LuaLaTeX 编译会重建整个字体数据库——慢到足以撞上编译超时，而且很容易被误认为文档本身慢。`fc-cache -fsv` 对 fontconfig 做的是同一件事。缓存必须写进 TeX Live 目录树，**而不是**写进 `TEXMFVAR`（`/var/lib/overleaf/tmp/texmf-var`）：`/var/lib/overleaf` 是卷，构建镜像时写在那里的东西在运行期是看不到的。
 - **texmf.cnf 中的设置。** `openout_any`/`openin_any` 是 shell-escape 的另一半（minted、inkscape/svg、gnuplot 与 tikzexternalize 都会写到工作目录之外，而默认的 `p` 会拒绝），`OSFONTDIR` 则是与 fontconfig 并列的、kpathsea 层面的系统字体路径。`Dockerfile` 还会对 fontconfig 隐藏 Type1 字体，因为 XeTeX 无法内嵌它们，却会按字体族名匹配到它们。
 
-刻意**没有**从 `texlive-full` 移植的：Google Fonts 下载与 Microsoft 核心字体安装器。本镜像改为内置字体，并把这一点讲清楚；加一个构建期从第三方镜像站下载的步骤，等于用可复现的构建去换一批许可证不明的字体。这个缺口是真实存在的（*Open Sans*、*Roboto* 之类的字体族确实没有），已记录在未完成项里。
+刻意**没有**从 `texlive-full` 移植的：Google Fonts 下载与 Microsoft 核心字体安装器。本镜像改为内置字体，并把这一点讲清楚；加一个构建期从第三方镜像站下载的步骤，等于用可复现的构建去换一批许可证不明的字体。同一个想法里真正被采纳的，是字体覆盖本身，只是换了另一条路线——见下文。
+
+### 5.3 Overleaf 文档里列出的字体
+
+比较暴露出来的缺口是真实的：一份写着 `\setmainfont{Open Sans}` 或
+`\setmainfont{Amiri}` 的文档会以 *「The font ... cannot be found」* 失败，尽管镜像
+带着 TeX Live `scheme-full` 的全部内容——因为 Overleaf
+[列出的那些可通过 `fontspec` 使用的字体族](https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F)
+只有一部分是 TeX Live 字体。那一页也说了其余部分该怎么办——*「use the relevant
+Google Noto font, as included in Ubuntu 22.04」*——这正是本仓库采取的路线：
+**用发行版的字体软件包**，而不是 `texlive-full` 在构建期下载的 `google/fonts` 仓库。
+
+有三件事让这次移植比「加一串包名」更需要小心：
+
+1. **在基础镜像可能基于的各个发行版上都可复现。** 每个包在加入之前都核对过：它在
+   Ubuntu 24.04 与 22.04 **两者**里都存在（`.research/font-check/`），因为镜像构建在
+   基础镜像所用的那个发行版上，而只在其中一个里存在的名字会在那边直接把构建搞失败。
+2. **字体族名是从字体里读出来的，不是猜的。** 下载 `.deb` 并用 `fontTools` 读它们的
+   name 表，纠正了三个否则会让 CI 失败的名字：`KacstOne` 在 `fonts-kacst-one` 里，
+   而不在 `fonts-kacst`；泰文字体族是 `Tlwg Typo`，而不是 `TLWG Typo`；`fonts-khmeros`
+   里没有裸的 `Khmer OS`。同一次核对还表明：URW base 35 那个包是拿到 `Nimbus
+   Roman`、`C059` 或 `Z003` 的唯一途径——TeX Live 把它们作为 Type1 字体提供，而上面的
+   fontconfig 规则会有意把它们隐藏掉。
+3. **不能让默认渲染发生任何变化。** `fonts-ubuntu` 被刻意*不*安装——一份不指定字体的
+   文档是否仍渲染成原样，不能取决于一次升级——而构建现在会打印 `serif`、`sans-serif`
+   与 `monospace` 解析成什么，好让这种变化能被看见。`texlive-full` 那种
+   `apt search ^fonts | xargs apt-get install` 的「一网打尽」正是因此被否决的，而不是
+   因为体积。
+
+`tests/fonts-extra` 会用 `fontspec` 在 XeLaTeX 下编译一份按组各选一个字体族的文档，
+因此只要有字体族缺失或被改名，CI 就会失败，并把名字留在日志里。这正是它与最初那个
+「加几个 Google 字体」的计划的区别：这份清单现在成了仓库可以据以回归测试的东西。
 
 ---
 
@@ -249,7 +323,7 @@ tests/compile.sh                                       # 最小可编译示例�
 - 上游对账（§8.1）是人工步骤；每次升级把 overlay 与上游的 diff 一并提交会让它可复核。
 - 多提供方特性（组映射、`preferred_username`）必须在依赖约束内设计。
 - 端到端验证需要真实实例与真实提供方，不在 CI 范围内。修订功能与真正的沙箱编译同样如此。
-- Google Fonts 是字体集合里唯一明显的缺口；内置一个精选子集就能补上它，而且不需要构建期下载。
+- Google Fonts 现在已通过发行版的软件包覆盖（§5.3），不再依赖构建期下载；仍未覆盖的，是那些没有发行版打包的字体族（`Merriweather`、`Raleway`、`Oswald`、`Source Sans Pro`、`PT Sans` 等）。内置一个精选子集就能补上它，而且不需要构建期下载——这也是 `texlive-full` 的做法相对本仓库唯一还占优的地方。
 - 如果哪天真的加了前端构建步骤，AI 助手只要替换一处 import 就能触达（§3）；在那之前不行。
 - `MAX_UPLOAD_SIZE` 与 linked-URL 代理之所以只是设置，是因为它们被 CE 核心代码读取；它们所属的两个功能（大文件上传、linked URL）在镜像里其实都是完整的。
 - 被否决的候选里唯一值得回过头做的是 `learn`（§3）：它的后端原样就能用，唯一的问题是它会在服务器开始监听**之前**缓存上游整个 wiki。改成后台抓取、或首次请求时抓取，就会比它来自的那个分支更好。
