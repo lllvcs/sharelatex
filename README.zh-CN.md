@@ -41,9 +41,14 @@
   [修订与审阅面板](#修订与审阅面板)
 - **沙箱编译**：每个项目在自己的 TeX Live 容器里编译，需手动开启，见
   [沙箱编译](#沙箱编译)
+- **AI 助手**（编辑器里的对话面板，能读取并修改项目）与**错误助手**（编译出错时的
+  *Suggest fix* 按钮），需手动开启，并需要一个 AI 网关，见 [AI 助手](#ai-助手)
+- **管理面板**：站点管理员用的用户列表与项目列表，需手动开启，见
+  [管理面板](#管理面板)
 - **OIDC（OpenID Connect）单点登录**，详见下文
-- 编辑器源码视图里的**符号面板**（symbol palette），由可选的前端重建提供，见
-  [重建前端](#重建前端可选)
+- 编辑器源码视图里的**符号面板**（symbol palette）与**引用选择器**
+  （reference picker，从项目的 `.bib` 文件里引用文献，索引比基础镜像自带的更好），
+  由可选的前端重建提供，见 [重建前端](#重建前端可选)
 - 可配置的上传上限与链接地址（linked URLs），见[环境变量](#环境变量)
 
 ## 安装
@@ -396,6 +401,60 @@ services:
   `OVERLEAF_IS_SERVER_PRO=true` 时运行），因此镜像名写错会在第一次编译时暴露，而不是
   在启动时。
 
+## AI 助手
+
+移植自 [`ayaka-notes/ayakaleaf-pro`](https://github.com/ayaka-notes/ayakaleaf-pro)。
+两个模块配合工作：**workbench** 是编辑器里的对话面板，**错误助手**则在编译出错时
+给出一个 *Suggest fix* 按钮并提议补丁。两者由同一组变量开启，而且都需要已经重建过
+前端（[重建前端](#重建前端可选)）——它们的用户界面是编译进 bundle 的，所以没有重建
+时路由存在、界面上什么都不会出现。
+
+```bash
+AI_ENABLED=true
+AI_BASE_URL=https://api.deepseek.com
+AI_API_KEY=sk-...
+AI_MODEL=deepseek-flash
+```
+
+- **网关必须说 OpenAI 的 chat-completions API**（`/chat/completions`）。这一点是对着
+  一个 DeepSeek 网关验证过的；`AI_BASE_URL` 是 `/chat/completions` 之前的那一段，
+  所以 `https://api.deepseek.com` 和 `https://api.openai.com/v1` 都是对的。
+- `AI_MODEL` 是该网关对模型的叫法。推理模型也能用，但它会把回复的前若干个 token 花在
+  推理上，所以要给它留出余量：`AI_MAX_STEPS`、`AI_TOKEN_QUOTA`、`AI_IMAGE_MODEL`
+  都是可选项（见[环境变量](#环境变量)）。
+- **密钥不会离开容器。** 它从环境变量读进服务的设置，再作为 bearer token 发出；它不会
+  被写进镜像、不会被记进日志，而且**绝不能放进 `settings.overlay.cjs`** 或任何其他会
+  进入仓库的文件。
+- 助手可以读取项目，但只能通过一个必须由用户批准的 diff 来修改。
+- 没有这些变量时模块根本不会被加载，所以不需要 AI 的实例与之前逐字节相同。
+
+关于这次移植有一件事要知道：该模块原本是照着 `@ai-sdk/openai-compatible` 写的，而基础
+镜像只在 lockfile 里有这个包、并没有声明它，Yarn PnP 因此会拒绝。
+`overlay/services/web/modules/workbench` 改用已声明的 `@ai-sdk/openai` provider，只把
+它的 `baseURL` 指向网关——同一套 wire protocol，只换了一行 import（见
+`WorkbenchAiClient.mjs` 与 `WorkbenchController.mjs` 里的注释）。
+
+## 管理面板
+
+移植自同一个项目，需手动开启：
+
+```bash
+OVERLEAF_ENABLE_ADMIN_TOOLS=true
+```
+
+它增加 `/admin/user`（可搜索的用户列表，含创建/激活/删除/恢复以及每个用户的 AI 用量）
+与 `/admin/project`（项目列表，含移入回收站、还原、取消删除与彻底清除），两者都在
+Overleaf 自己的 `ensureUserIsSiteAdmin` 之后。它的页面是 webpack 的**页面入口**，
+所以同样需要前端重建。
+
+**为什么它必须加载在 `user-activate` 之前。** 基础镜像的 `user-activate` 模块注册了与
+它相同的两个路径——`GET /user/activate` 与 `GET /admin/user`——而 Express 把路径给先
+注册的一方。`moduleImportSequence` 默认只能往后追加，那样 `/admin/user` 会留在基础镜像
+那个指向 `/admin/register` 的重定向上，Manage Users 页面永远到不了。
+`overlay/etc/overleaf/overlay-modules.cjs` 因此把 `admin-tools` 插在 `user-activate`
+**之前**；什么都没有丢掉，而在这两个共享路径上管理面板胜出。
+`tests/overlay-settings.test.mjs` 会检查这个顺序。
+
 ## 字体
 
 镜像包含 TeX Live 安装（`scheme-full`，即 CTAN 字体归档中所有有 TeX Live 宏包
@@ -503,6 +562,15 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 | `MAX_UPLOAD_SIZE` | `50` | 上传上限，单位为**兆字节**。zip 因内容解压后过大而被拒绝的那个阈值也随之提高（是该上限的六倍，且不低于官方镜像允许的 300 MB）。 |
 | `ENABLED_LINKED_FILE_TYPES` | 空 | 提供哪些链接文件类型，以逗号分隔（`url`、`project_file`、`project_output_file`）。使用 `url` 时，本镜像还会把 CE 镜像运行却从未指向的 linked-URL 代理配置好，使链接地址真正可用。 |
 | `LINKED_URL_PROXY_HOST` | `127.0.0.1` | linked-URL 代理的主机，用于各服务运行在独立容器中的部署。 |
+| `OVERLEAF_ENABLE_ADMIN_TOOLS` | `false` | 设为 `true` 即开启管理面板：`/admin/user` 的用户列表与 `/admin/project` 的项目列表，供站点管理员使用。见 [管理面板](#管理面板)。 |
+| `AI_ENABLED` | `false` | 设为 `true` 即开启 AI 助手与错误助手。还需要 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`；缺少它们时面板会出现，但每个请求都会失败。见 [AI 助手](#ai-助手)。 |
+| `AI_BASE_URL` | – | AI 功能所连的网关，例如 `https://api.deepseek.com` 或 `https://api.openai.com/v1`。它必须说 OpenAI 的 **chat completions** API。 |
+| `AI_API_KEY` | – | 该网关的密钥。它以 `Authorization: Bearer` 头发出，且从不记入日志。 |
+| `AI_MODEL` | – | 用于对话与错误建议的模型，例如 `deepseek-flash`。 |
+| `AI_IMAGE_MODEL` | – | 可选：同一网关上用于包含图片的对话的模型。 |
+| `AI_MAX_STEPS` | `20` | 可选：一条用户消息最多可以触发多少次工具调用（跨请求累计）。 |
+| `AI_PROXY_URL` | – | 可选：让网关调用走一个 HTTP 代理。 |
+| `AI_TOKEN_QUOTA` | – | 可选：每个用户在每个周期内的 token 预算；`AI_TOKEN_QUOTA_PERIOD` 为 `month`（默认）或 `day`。 |
 | `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | 容器的设置文件。它会加载并扩展基础镜像的那一份；**替换它同时也会移除本镜像的模块注册**——见 [overlay/README.md](overlay/README.md)。 |
 
 ## 常见疑问

@@ -219,6 +219,39 @@ webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以�
   该路径并把它重定向到 `/admin/register`，而模块序列只能往后追加，所以
   `user-activate` 赢。
 
+### 3.3 这次解锁之后移植了什么
+
+重建被证明可行之后，这些功能里有三个被移植了过来。每一个实际花了多大代价，是对着镜像
+量出来的，而不是从源码树里读出来的：
+
+| | AI 助手（`workbench` + `error-assistant`） | 管理面板（`admin-tools`） | 引用选择器（`reference-picker`） |
+| --- | --- | --- | --- |
+| 源文件 | 34 + 14 | 117 | 8 |
+| 核心 `@/` import 数，以及其中缺失的个数 | 36 + 14，**0 个缺失** | 48，**0 个缺失** | 15，**0 个缺失** |
+| 未声明的 npm 包 | `@ai-sdk/openai-compatible` | 无 | 无 |
+| 它的 UI 如何到达浏览器 | 7 个注册表键 | 2 个 webpack **页面入口**（`globSync` 自己就会扫到） | 3 个注册表键 |
+| 其他工作 | 一处 import 替换；`workbench` 要排在 `error-assistant` 之前 | 插在 `user-activate` **之前** | 无 |
+| 需要外部服务 | 一个 AI 网关 | 无 | 无 |
+| 需要重建 | 需要 | 需要 | 需要 |
+
+有三件事值得记下来，因为它们并不显然：
+
+- **`@/` import 才是真正的风险，而结果是没事。** 早先对 `admin-tools` 的分析只能说到
+  「它有些 `@/...` import 可能是 Pro 专属的核心前端文件，在这里无法验证」；把 48 个
+  全部对着镜像核一遍（`.research/` 风格的脚本，在容器里跑）一次就回答了。剩下的风险
+  从来不是*核心*前端——两个产品里是同一份代码——而是 CE 镜像会移除的*模块*。
+- **AI provider 的替换是真的，但很小。** `workbench` 从一个镜像只在 lockfile 里有的包里
+  import `createOpenAICompatible`，所以 PnP 会拒绝它；又因为模块是用 `await import()`
+  加载的，web 服务根本起不来。已声明的 `@ai-sdk/openai` 说的是同一套 wire protocol；
+  差别在于裸的 provider 调用会落到哪个 API（`/responses` 而不是 `/chat/completions`），
+  所以那一处调用点用的是 `.chat(...)`。移植代码写出来之前对着真实网关验证过一次，之后
+  又顺着模块自身的代码路径验证了一次。
+- **`reference-picker` 是整个仓库里最便宜的功能。** 基础镜像的核心已经带了 BibTeX
+  解析器、编辑器的 BibTeX 语言、「root bib document」与「reference format」设置，以及
+  一个*基础*的引用索引——而且它已经在为更好的索引调用
+  `importOverleafModules('referenceIndices')`。该模块只提供另外三个注册表项，别的什么都
+  不做；它的 `index.mjs` 是个空对象，所以它根本不在 `moduleImportSequence` 里。
+
 ---
 
 ## 4. 修订与审阅面板
@@ -463,6 +496,22 @@ tests/compile.sh                                       # 最小可编译示例�
   本地全绿对这些一无所证。
 
 `tests/verify-overlay.sh` 是长胖最多的部分：它在镜像内加载被替换的模块（这正是能抓到 Yarn PnP 解析问题的地方）、用桩驱动修订路由、在功能开关打开与关闭两种情况下检查设置文件、校验 seccomp 配置、检查 TeX Live 设置与 latexmk 自定义依赖、运行 `run-chktex.sh`，并编译视图。
+
+### 7.1 这三个移植来的功能各自被什么检查住
+
+AI 助手、管理面板与引用选择器都是在前端重建被证明可行（§3.2）之后移植的，每一个都在它
+可能出错的地方被检查：
+
+| 功能 | 能抓到回归的检查 |
+| --- | --- |
+| 三者都是 | `tests/verify-overlay.sh` 在镜像内 import 每个已移植模块的 `index.mjs`，并把它的 router 对着桩驱动一遍，这会解析整条 import 图——依赖缺失时正是它会让 web 服务起不来 |
+| 三者都是 | 它还会在 `public/js` 里 grep 每个功能组件独有的字符串（`symbol-palette-close-button-outer`、`references-search-modal`、`workbench-ai-message`）。*核心*里也有的字符串会让这个检查失去意义，所以每一个都先对着镜像自己的 `frontend/` 核过——`ai-paywall-notification` 看起来很独特，其实活在三个核心文件里，这正是它没有被选中的原因 |
+| 注册表 | `tests/frontend-rebuild.test.mjs` 会解析 `settings.frontend.cjs` 里的每个路径、检查核心所要的那些键，并检查标记字符串仍在组件里——这两半会朝相反的方向失败 |
+| 模块顺序 | `tests/overlay-settings.test.mjs` 断言 `admin-tools` 被插在 `user-activate` **之前**（两者都注册 `/admin/user`，先注册者赢），以及 `workbench` 在 `error-assistant` 之前 |
+| AI 网关 | 在移植代码写出来之前手工对着一个 DeepSeek 网关验证过一次：`createOpenAI({ baseURL, apiKey })` 配 `.chat(model)` 能应答并报出 token 用量，而这正是 `TokenQuota` 需要的。这一项不在 CI 里——它需要密钥 |
+
+仍然只能手工验证、并且没有被验证的是：AI 面板在浏览器里能渲染并流式输出、管理面板的页面
+能打开、以及引用选择器的模态框能弹出。这三者都需要一个跑起来的实例。
 
 ---
 
