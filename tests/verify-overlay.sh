@@ -341,7 +341,17 @@ for (const name of ['bootstrap', 'pages/ide', 'pages/project-list', 'marketing']
     throw new Error('the rebuilt manifest lost the core entrypoint ' + name)
   }
 }
-console.log('  the rebuilt manifest has ' + entrypoints.length + ' entrypoints, including the core ones')
+// The admin panel is the one ported feature whose user interface is not a
+// registry entry but a pair of webpack *page* entrypoints, which webpack.config.js
+// discovers by scanning modules/*/frontend/js/pages/**. So for it the manifest is
+// the evidence: the registry cannot make these appear, and nothing else checks
+// them - the markers below cover the components the registry pulls in.
+for (const name of ['modules/admin-tools/pages/manage-users', 'modules/admin-tools/pages/manage-projects']) {
+  if (!manifest.entrypoints[name]) {
+    throw new Error('the rebuilt manifest has no ' + name + ': the admin panel would fail to render')
+  }
+}
+console.log('  the rebuilt manifest has ' + entrypoints.length + ' entrypoints, including the core ones and the admin pages')
 " || exit 1
   # Each marker is a string that occurs only in that module's own frontend (and
   # not in the core, which would make the check meaningless). CSS is extracted
