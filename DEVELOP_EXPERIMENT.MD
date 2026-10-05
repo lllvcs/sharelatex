@@ -141,7 +141,7 @@ The consequences are what make the ports possible:
   | AI assistant (workbench), error assistant, admin panel, template gallery, Git bridge, GitHub sync, Zotero/Mendeley, personal access tokens, open-in-overleaf | the components are module frontend files registered in `overleafModuleImports` - **not in the bundle**, so the feature cannot be reached |
   | symbol palette, Python runner, reference picker | the module *is* the frontend: its `index.mjs` registers no routes, no hooks and no settings, it only exists so the registry has something to point at. Adding them would change nothing at all |
   | `learn` (the documentation mirror) | backend-only and its imports resolve, so it is the one rejected candidate that *would* work - but the module fetches and caches every page of the upstream wiki **while the server starts**, with no timeout, before it accepts a request |
-  | LDAP, the fork's own OIDC module | additionally blocked: `ldapjs` and `passport-openidconnect` are not declared by `@overleaf/web`, so PnP refuses the import and the whole web service fails to boot |
+  | LDAP, the fork's own OIDC module | **not to be ported, by decision as well as by constraint.** Both are additionally blocked (`ldapjs` and `passport-openidconnect` are not declared by `@overleaf/web`, so PnP refuses the import and the whole web service fails to boot), but the decision stands on its own: this fork's OIDC support is the one that is used and hardened here (§6), and the fork's module registers a *second* `oidc` strategy with its own `/oidc/login` routes and its own `Settings.oauthProviders`, which would collide with `/login/oidc` instead of extending it |
   | `authentication/saml` | resolvable - `@node-saml/passport-saml` is declared and patched - but it carries its own login and logout routes that would collide with the OIDC overlay's, and the fork's patched `@node-saml/node-saml` resolution is *not* applied in this image, so its behaviour could not be verified before shipping it |
   | `login-register`'s `@domain` registration restriction | the module is a whole replacement of the login and registration pages, which this fork already replaces for OIDC; only its "registration is limited to one email domain" check would add something, and that belongs in the core register controller rather than in a second one |
 
@@ -151,12 +151,60 @@ The consequences are what make the ports possible:
   import (`createOpenAICompatible` from `@ai-sdk/openai-compatible`, which is
   only a transitive dependency). It would still be unreachable, because the chat
   panel, the error-assistant components and the editor extension that trigger it
-  are compiled into the bundle. If this repository ever gains a frontend build
-  step, that is the pivot point.
+  are compiled into the bundle.
+
+  **How far the "frozen frontend" reaches, measured.** The image was read
+  directly from the registry (`.research/image-inspection/`, which also records
+  the method), and the answer is more interesting than "the UI is missing":
+
+  | Piece | In the image? |
+  | --- | --- |
+  | `services/web/frontend/` (the whole UI source) | yes, 2367 entries |
+  | `webpack.config*.js`, `frontend/macros/import-overleaf-module.macro.js` | yes |
+  | `public/js/*.js` and `public/manifest.json` (the built bundle) | yes |
+  | `overleaf/.pnp.cjs` | yes, 1.19 MB |
+  | the webpack **toolchain** in that PnP map | **no** - devDependencies are pruned after the build (`genScript.js` ends its compile step with `yarn workspaces focus --all --production`) |
+  | the **yarn cache** of those pruned packages | yes, largely (2829 zips, including webpack's loaders and `@babel/*`) |
+
+  And the bundle's own `public/manifest.json` has 41 entrypoints, of which
+  exactly two belong to a module (`modules/launchpad/pages/launchpad`,
+  `modules/user-activate/pages/user-activate-page`). So the UI of those features
+  is genuinely not in the image, and switching one on **without** rebuilding does
+  not give an empty page - `ExpressLocals.getWebpackAssets()` indexes
+  `webpackManifest.entrypoints[entrypoint].assets`, so an unknown entrypoint is an
+  **HTTP 500**, which is worse than the feature being absent.
+
+  Rebuilding is possible, and upstream does it in this shape:
+  `OVERLEAF_CONFIG=<a settings file with a filled registry> yarn run
+  webpack:production`, after `yarn install` restores the devDependencies from the
+  cache. What it costs: a much longer image build, a generated bundle that has to
+  be regenerated on every upstream bump, and - for the AI modules specifically -
+  a one-line import substitution plus an AI gateway to point at. It is also easy
+  to get silently wrong: running webpack without `OVERLEAF_CONFIG` reads the
+  image's own all-empty registry and produces an equally empty bundle **with a
+  green build**. That is the pivot point if this repository ever takes on a
+  frontend rebuild; it is not something the overlay can do.
 - **Order in the module list is load-bearing.** The sequence is walked with
   `await import()`, so one module whose imports do not resolve aborts
   `loadModules()` and the web service does not start. Only modules that are
   known to resolve may be added.
+
+### 3.1 What only the image could settle
+
+Three of the overlay's assumptions were checked against the published image
+rather than against the source tree, and one of them was wrong:
+
+| Assumption | Result |
+| --- | --- |
+| the compile runner is `DockerRunner.js`, and clsi checks the same name | confirmed - `CommandRunner.js` imports it and `config/settings.defaults.cjs:133` stats it, and neither file is in the image |
+| `/usr/local/share/latexmk/LatexMk` is the three-line stub | confirmed (125 bytes), so replacing it is a strict gain |
+| `qpdf` and `time` are already installed, `ghostscript`/`Rscript`/`gnuplot`/`chktex`/`inkscape`/`lilypond` are not | confirmed |
+| TeX Live lives at `/usr/local/texlive/<year>` and only DejaVu is in `/usr/share/fonts` | confirmed (2026) |
+| **`server-ce/config/env.sh` sets `TEXLIVE_IMAGE_USER` for sibling compiles** | **wrong for 6.3.0.** The image's `env.sh` (383 bytes) has only the `*_HOST` exports; the block exists on `main`, not here. clsi would therefore start the compile container as `tex` (uid 1000) while the compile directories belong to `www-data` (uid 33), and every sandboxed compile would fail on a permission error. The overlay sets `Settings.clsi.docker.user` itself now |
+
+That last row is the reason the inspection was worth the download: it is a
+failure that only shows up on a real compile, in a deployment, with the socket
+mounted.
 
 ---
 
@@ -296,8 +344,46 @@ Two smaller items from the same comparison:
 Deliberately **not** ported from `texlive-full`: the Google Fonts download and
 the Microsoft core-font installer. This image vendors its fonts instead and says
 so; adding a build-time download from a third-party mirror would trade a
-reproducible build for fonts of uncertain licence. The gap is real (families
-like *Open Sans* or *Roboto* are not present) and is recorded as an open item.
+reproducible build for fonts of uncertain licence. What *was* taken from the same
+idea is the font coverage itself, by a different route - see below.
+
+### 5.3 The fonts Overleaf documents
+
+The gap the comparison exposed was real: a document that says
+`\setmainfont{Open Sans}` or `\setmainfont{Amiri}` stopped with *"The font ...
+cannot be found"* even though the image carries all of TeX Live `scheme-full`,
+because the families Overleaf
+[lists as usable through `fontspec`](https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F)
+are only partly TeX Live fonts. That page also says what to do about the rest -
+*"use the relevant Google Noto font, as included in Ubuntu 22.04"* - which is the
+route taken here: **the distribution's font packages**, not the `google/fonts`
+repository that `texlive-full` downloads at build time.
+
+Three things made the port more careful than a package list:
+
+1. **Reproducibility across the base image's release.** Every package was checked
+   to exist in **both** Ubuntu 24.04 and 22.04 before being added, because the
+   image is built on whichever release the base image uses and a name that only
+   exists in one of them would fail the build there (`.research/font-check/`).
+2. **The family names were read out of the fonts, not guessed.** The `.deb` files
+   were downloaded and their name tables read with `fontTools`, which corrected
+   three names that would otherwise have failed CI: `KacstOne` is in
+   `fonts-kacst-one` and not in `fonts-kacst`, the Thai families are `Tlwg Typo`
+   and not `TLWG Typo`, and `fonts-khmeros` has no bare `Khmer OS`. The same
+   check showed that the URW base 35 package is the only way to get `Nimbus
+   Roman`, `C059` or `Z003`: TeX Live has them as Type1 fonts, which the
+   fontconfig rule above hides on purpose.
+3. **Nothing may change the default rendering.** `fonts-ubuntu` is deliberately
+   *not* installed - whether a document that names no font still renders the same
+   must not depend on an upgrade - and the build now prints what `serif`,
+   `sans-serif` and `monospace` resolve to, so such a change would be visible.
+   The blunderbuss `apt search ^fonts | xargs apt-get install` of `texlive-full`
+   was rejected for this reason, not for size.
+
+`tests/fonts-extra` compiles a document that selects one family per group with
+`fontspec` under XeLaTeX, so a missing or renamed family fails CI with the name
+in the log. That is the difference to the original plan of "add some Google
+fonts": the list is now something the repository can regress against.
 
 ---
 
@@ -440,8 +526,12 @@ and compiles the views.
 - End-to-end verification needs a real instance and a real provider; it is not
   part of CI. The same is true for track changes and for a real sandboxed
   compile.
-- Google Fonts are the one clear gap left in the font collection; vendoring a
-  curated subset would close it without a build-time download.
+- Google Fonts are covered now (§5.3) through the distribution's packages rather
+  than a build-time download; what remains uncovered are the families that no
+  distribution packages (`Merriweather`, `Raleway`, `Oswald`, `Source Sans Pro`,
+  `PT Sans`, ...). Vendoring a curated subset would close that without a
+  build-time download, and is the one thing `texlive-full`'s approach still has
+  over this one.
 - If a frontend build step is ever added, the AI assistant becomes reachable
   after a single import substitution (§3); until then it is not.
 - `MAX_UPLOAD_SIZE` and the linked-URL proxy are settings only because they are

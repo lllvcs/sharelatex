@@ -270,6 +270,14 @@ own.
   when `SANDBOXED_COMPILES=true` and the file is missing. The overlay adds the
   file, so the feature becomes available; it also has to be *configured* on the
   host, see `README.md`.
+- The compile container runs as `Settings.clsi.docker.user`, which clsi defaults
+  to `TEXLIVE_IMAGE_USER` or `tex` (uid 1000). The directories it compiles in
+  belong to `www-data` - the uid clsi writes them with - so the overlay sets the
+  user to `www-data` when `SANDBOXED_COMPILES` is on. Without that, every
+  sandboxed compile fails on a permission error, which is why later releases of
+  the base image export `TEXLIVE_IMAGE_USER=www-data` from
+  `/etc/overleaf/env.sh` (a file this overlay does not replace; an explicit
+  `TEXLIVE_IMAGE_USER` still wins).
 - The seccomp profile is version dependent. `clsi-profile.json` is the one that
   belongs to the clsi of this base image (the copy in
   `ayaka-notes/texlive-full` is an older, smaller one: 171 instead of 205 syscall

@@ -113,6 +113,21 @@ function additionalSettings(env) {
     settings.apis = { linkedUrlProxy: { url: `http://${host}:3066` } }
   }
 
+  // Which user the compile container runs as. clsi defaults it to
+  // `TEXLIVE_IMAGE_USER` or `tex` (uid 1000), but the directories it compiles
+  // in belong to `www-data` - the uid clsi itself runs as and the one its init
+  // script chowns them to - so a sibling container started as `tex` cannot
+  // write into them and every sandboxed compile fails with a permission error.
+  //
+  // Later releases of the base image fix this in `/etc/overleaf/env.sh` by
+  // exporting TEXLIVE_IMAGE_USER=www-data. This image does not replace that
+  // file, and setting the value here has the same effect without depending on
+  // it; an explicit TEXLIVE_IMAGE_USER still wins, for a compile image that has
+  // no www-data user.
+  if (env.SANDBOXED_COMPILES === 'true' && !env.TEXLIVE_IMAGE_USER) {
+    settings.clsi = { docker: { user: 'www-data' } }
+  }
+
   return settings
 }
 

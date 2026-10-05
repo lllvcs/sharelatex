@@ -1,0 +1,6 @@
+# The shared ../latexmkrc compiles with LuaLaTeX, which finds fonts through its
+# own name database and through OSFONTDIR.  fontspec resolves a family name
+# through fontconfig, so the families this image installs are only proven to be
+# reachable with XeLaTeX - the same choice tests/fonts-by-name makes.
+$pdf_mode = 5;
+$xelatex = 'xelatex -synctex=1 -interaction=nonstopmode -file-line-error -shell-escape -recorder';

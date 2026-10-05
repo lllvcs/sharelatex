@@ -16,6 +16,7 @@ override that (it is read after the shared one).
 | --- | --- |
 | `chinese-fonts` | the vendored Chinese fonts are registered with fontconfig (`SimSun`, `SimHei`, `FangSong`) |
 | `fonts-by-name` | fonts selected by family name, compiled with **XeLaTeX** because that is the engine that goes through fontconfig (`FandolSong`, `WenQuanYi Zen Hei`, ...) |
+| `fonts-extra` | the families this image installs from Overleaf's supported-font list resolve by name (`Arimo`, `Nimbus Roman`, `Cantarell`, `Amiri`, `Charis SIL`, `Garuda`, `Lohit Devanagari`, `Tibetan Machine Uni`, ...) - also XeLaTeX |
 | `fonts-zhmetrics` | the `zhmetrics` metrics have their glyph files and map (`uniyou20`, `unisong5b`, ...), compiled with pdfLaTeX |
 | `knitr` | `.Rnw` sources are knitted by R and then compiled, i.e. `texlive/LatexMk`, R and the `knitr` package work together |
 | `gregorio`, `lilypond`, `minted`, `svg_(inkscape)`, `shell-escape_subfolder_(tikzext)` | the tools installed on top of the base image work |

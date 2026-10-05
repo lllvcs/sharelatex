@@ -421,10 +421,12 @@ services:
   `TEX_LIVE_DOCKER_IMAGE` as well (`bin/run-script scripts/backfill_project_image_name.mjs`
   writes it into the database if you want it to be explicit).
 - The compile containers run with `--network none`, `--cap-drop ALL`,
-  `no-new-privileges` and the seccomp profile the image ships, under the
-  `www-data` uid that owns the compile directory
-  (`server-ce/config/env.sh` sets `TEXLIVE_IMAGE_USER` for you when
-  `SANDBOXED_COMPILES_SIBLING_CONTAINERS=true`).
+  `no-new-privileges` and the seccomp profile the image ships, as the `www-data`
+  user that owns the compile directory. That last part matters: clsi's own
+  default is `tex` (uid 1000), which cannot write into directories owned by
+  `www-data`, so a sandboxed compile would fail with a permission error. The
+  image sets the user itself for that reason; set `TEXLIVE_IMAGE_USER` if your
+  compile image has no `www-data` user.
 
 ### Things that are easy to get wrong
 
@@ -484,10 +486,37 @@ Notes:
   `fontset=founder`, `fontset=mac`, ...) require **XeLaTeX or LuaLaTeX**; with
   pdfLaTeX, CTeX reports the font set as unavailable by design. `fandol` is
   part of TeX Live and works with XeLaTeX/LuaLaTeX.
-- `tests/fonts-zhmetrics` and `tests/fonts-by-name` are minimal examples for
-  both routes and are compiled by CI inside the image.
+- **The families Overleaf documents.** Beyond TeX Live, the image installs the
+  Debian/Ubuntu packages that provide the rest of
+  [Overleaf's list of fonts usable through `fontspec`](https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F):
+  the Noto collections for the scripts without a family of their own, the
+  metric-compatible Croscore set (`Arimo`, `Tinos`, `Cousine` - stand-ins for
+  Arial, Times New Roman and Courier New), the URW base 35 families (`Nimbus
+  Roman`, `Nimbus Sans`, `C059`, `URW Bookman`, `Z003`, ...), the SIL, GFS,
+  Lohit, tlwg and Baekmuk/Nanum families, and the packaged Google families
+  (`Cantarell`, `Comic Neue`, `OpenDyslexic`, `Symbola`, `Jura`, `Elstob`, ...).
+  A document that names one of them used to fail with *"The font ... cannot be
+  found"*; `tests/fonts-extra` now compiles a document that selects one family
+  per group, so a missing family fails CI.
+- The Google fonts are taken from the distribution rather than downloaded from
+  the `google/fonts` repository at build time (which is what
+  [texlive-full](https://github.com/ayaka-notes/texlive-full) does): the packaged
+  set is reproducible, it exists on both Ubuntu releases the base image may be,
+  and every package was checked against both. `fonts-ubuntu` is deliberately
+  **not** among them - installing it could change how a document that names no
+  font is rendered, and the build prints what `serif`, `sans-serif` and
+  `monospace` resolve to so that such a change would be visible.
+  The families Overleaf lists that **no** distribution packages - among them
+  *Merriweather*, *Raleway*, *Oswald*, *Open Sans Condensed*, *Source Sans Pro*
+  and *PT Sans* - are therefore still missing; vendoring them into
+  [`fonts/`](fonts/README.md) the way the Chinese collection is vendored would
+  close that without a build-time download.
+- `tests/fonts-zhmetrics`, `tests/fonts-by-name` and `tests/fonts-extra` are
+  minimal examples for the three routes (metrics, TeX Live families by name, the
+  installed families by name) and are compiled by CI inside the image.
 - The vendored Microsoft/Apple/Adobe fonts are not redistributable; see
-  [`fonts/README.md`](fonts/README.md).
+  [`fonts/README.md`](fonts/README.md). The Croscore and Liberation families are
+  the redistributable equivalents of most of them.
 - **Caches.** Both font caches are built while the image is built
   (`fc-cache -fsv` and `luaotfload-tool --update`), otherwise the first compile
   in a fresh container would rebuild the LuaTeX name database - slow enough to
@@ -531,7 +560,8 @@ Documented in the [OIDC section](#oidc-single-sign-on) above:
 | `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | – | Host path of the directory clsi compiles in. Required with `SANDBOXED_COMPILES` (clsi refuses to start without it). |
 | `SANDBOXED_COMPILES_HOST_DIR_OUTPUT` | – | Host path of the output directory, for compiles that write their output elsewhere. |
 | `SANDBOXED_COMPILES_HOST_DIR_CACHE` | – | Host path of the clsi cache, so that a PNG conversion container can reach it. |
-| `SANDBOXED_COMPILES_SIBLING_CONTAINERS` | `false` | Set to `true` in the single-container setup; it makes the container run the compile containers as `www-data`, which owns the compile directory. Handled by the base image. |
+| `SANDBOXED_COMPILES_SIBLING_CONTAINERS` | `false` | Set to `true` in the single-container setup. The base image reads it to point `TEXLIVE_IMAGE_USER` at the owner of the compile directory - **the 6.3.0 image has no such branch**, so this image sets the compile user itself and the variable is only a fallback here. |
+| `TEXLIVE_IMAGE_USER` | this image sets it to `www-data` | Which user the compile container runs as. clsi's own default is `tex` (uid 1000), which cannot write into the compile directories that belong to `www-data`; set this explicitly to override it for a compile image that has no `www-data` user. |
 | `MAX_UPLOAD_SIZE` | `50` | Upload limit in **megabytes**. The limit at which a zip is refused because its contents would expand too far grows with it (it is six times the limit, and never below the 300 MB the official image allows). |
 | `ENABLED_LINKED_FILE_TYPES` | empty | Which linked-file types to offer, comma separated (`url`, `project_file`, `project_output_file`). With `url`, this image also configures the linked-URL proxy that the CE image runs but never points at, so that linked URLs work. |
 | `LINKED_URL_PROXY_HOST` | `127.0.0.1` | Host of the linked-URL proxy, for a setup in which the services run in separate containers. |

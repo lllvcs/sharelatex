@@ -373,9 +373,10 @@ services:
   镜像里编译，而默认镜像同样是 `TEX_LIVE_DOCKER_IMAGE`（如果希望数据库里明确写出来，
   可以执行 `bin/run-script scripts/backfill_project_image_name.mjs`）。
 - 编译容器以 `--network none`、`--cap-drop ALL`、`no-new-privileges` 以及镜像自带的
-  seccomp 配置运行，并且使用拥有编译目录的 `www-data` uid
-  （当 `SANDBOXED_COMPILES_SIBLING_CONTAINERS=true` 时，
-  `server-ce/config/env.sh` 会替你设置 `TEXLIVE_IMAGE_USER`）。
+  seccomp 配置运行，身份是拥有编译目录的 `www-data` 用户。最后这一点很关键：clsi 自己的
+  默认值是 `tex`（uid 1000），而编译目录属于 `www-data`，因此以 `tex` 启动的兄弟容器
+  根本写不进去，每次沙箱编译都会因权限错误失败。本镜像为此自行设置了该用户；如果你的
+  编译镜像里没有 `www-data` 用户，请设置 `TEXLIVE_IMAGE_USER`。
 
 ### 容易出错的地方
 
@@ -423,10 +424,27 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 - CTeX 的纯 Unicode 字体集（`fontset=fandol`、`fontset=founder`、
   `fontset=mac` 等）必须使用 **XeLaTeX 或 LuaLaTeX**；在 pdfLaTeX 下 CTeX 会
   按设计报「fontset 不可用」。`fandol` 属于 TeX Live，用 XeLaTeX/LuaLaTeX 即可。
-- `tests/fonts-zhmetrics` 与 `tests/fonts-by-name` 是这两种用法的示例，CI 会在
+- **Overleaf 文档里列出的字体族。** 除 TeX Live 之外，镜像还安装了 Debian/Ubuntu
+  软件包，以提供 [Overleaf 那份可通过 `fontspec` 使用的字体清单](https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F)
+  中其余的字体：为没有自己字体族的书写系统准备的 Noto 各系列、度量兼容的 Croscore
+  字体集（`Arimo`、`Tinos`、`Cousine`——分别是 Arial、Times New Roman 与 Courier
+  New 的替身）、URW base 35 各字体族（`Nimbus Roman`、`Nimbus Sans`、`C059`、
+  `URW Bookman`、`Z003` 等）、SIL、GFS、Lohit、tlwg 与 Baekmuk/Nanum 各字体族，
+  以及随发行版打包的 Google 字体（`Cantarell`、`Comic Neue`、`OpenDyslexic`、
+  `Symbola`、`Jura`、`Elstob` 等）。以前在文档里指名其中某个字体族会以
+  *「The font ... cannot be found」* 失败；现在 `tests/fonts-extra` 会编译一份按组
+  各选一个字体族的文档，因此只要有字体族缺失，CI 就会失败。
+- Google 字体取自发行版，而不是在构建时从 `google/fonts` 仓库下载（[texlive-full](https://github.com/ayaka-notes/texlive-full)
+  就是那样做的）：发行版打包的集合可复现，在基础镜像可能基于的两个 Ubuntu 发行版上
+  都存在，而且每个软件包都针对这两者核对过。`fonts-ubuntu` 被**刻意**排除在外——
+  安装它可能改变未指定字体的文档的渲染结果，而构建过程会打印 `serif`、`sans-serif`
+  与 `monospace` 实际解析成哪个字体，好让这种变化能被看见。
+- `tests/fonts-zhmetrics`、`tests/fonts-by-name` 与 `tests/fonts-extra` 分别是这三条
+  路线（度量、按族名使用 TeX Live 字体、按族名使用已安装的字体）的示例，CI 会在
   镜像内实际编译它们。
 - 内置的微软/苹果/Adobe 字体不可再分发，许可证情况见
-  [`fonts/README.md`](fonts/README.md)。
+  [`fonts/README.md`](fonts/README.md)。Croscore 与 Liberation 字体族是其中大多数
+  字体的可再分发替代品。
 - **字体缓存。** 两个字体缓存都在构建镜像时生成（`fc-cache -fsv` 与
   `luaotfload-tool --update`），否则新容器里的首次编译都会重建 LuaTeX 的字体名
   数据库——慢到看起来像文档卡住了。LuaTeX 缓存是**故意**写进 TeX Live 目录树的：
@@ -468,7 +486,8 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 | `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | – | clsi 进行编译的目录在宿主机上的路径。与 `SANDBOXED_COMPILES` 一起使用时必填（缺少它 clsi 会拒绝启动）。 |
 | `SANDBOXED_COMPILES_HOST_DIR_OUTPUT` | – | 输出目录在宿主机上的路径，用于把输出写到别处的编译。 |
 | `SANDBOXED_COMPILES_HOST_DIR_CACHE` | – | clsi 缓存在宿主机上的路径，以便做 PNG 转换的容器能够访问到它。 |
-| `SANDBOXED_COMPILES_SIBLING_CONTAINERS` | `false` | 在单容器部署中设为 `true`；它让容器以 `www-data` 身份运行编译容器，而 `www-data` 正是编译目录的所有者。由基础镜像处理。 |
+| `SANDBOXED_COMPILES_SIBLING_CONTAINERS` | `false` | 在单容器部署中设为 `true`。它由基础镜像读取，用于把 `TEXLIVE_IMAGE_USER` 指向编译目录的所有者；**6.3.0 镜像里并没有这个分支**，本镜像自行设置编译容器的用户，因此该变量在这里只是备用。 |
+| `TEXLIVE_IMAGE_USER` | 本镜像设为 `www-data` | 编译容器以哪个用户运行。默认情况下 clsi 使用 `tex`（uid 1000），它无法写入属于 `www-data` 的编译目录；如果你的编译镜像里没有 `www-data` 用户，可以显式设置它来覆盖。 |
 | `MAX_UPLOAD_SIZE` | `50` | 上传上限，单位为**兆字节**。zip 因内容解压后过大而被拒绝的那个阈值也随之提高（是该上限的六倍，且不低于官方镜像允许的 300 MB）。 |
 | `ENABLED_LINKED_FILE_TYPES` | 空 | 提供哪些链接文件类型，以逗号分隔（`url`、`project_file`、`project_output_file`）。使用 `url` 时，本镜像还会把 CE 镜像运行却从未指向的 linked-URL 代理配置好，使链接地址真正可用。 |
 | `LINKED_URL_PROXY_HOST` | `127.0.0.1` | linked-URL 代理的主机，用于各服务运行在独立容器中的部署。 |

@@ -1,0 +1,97 @@
+% The font families this image installs so that they can be selected by name, as
+% Overleaf documents them
+% (https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F).
+%
+% fontspec resolves a family name through fontconfig, so this example fails to
+% compile when one of these families is missing - which is exactly the error it
+% exists to catch ("The font ... cannot be found"). It is compiled with XeLaTeX
+% (see the latexmkrc next to it) because that is the engine that goes through
+% fontconfig.
+%
+% Every name below was read out of the font files of the package that provides
+% it, not derived from the package name: `fonts-kacst` for example has no
+% `KacstOne` (that is `fonts-kacst-one`), the Thai packages provide `Tlwg Typo`
+% and not `TLWG Typo`, and `fonts-khmeros` has no plain `Khmer OS`.
+%
+% Add a family here when the image starts installing it, and remove one when it
+% stops: this file is the list of what the image promises.
+\documentclass{article}
+\usepackage{fontspec}
+\setmainfont{Arimo}
+
+\newcommand{\showfont}[1]{%
+  \par\noindent\textbf{#1}\quad{\fontspec{#1}The quick brown fox --- 0123456789}%
+}
+
+\begin{document}
+
+\section*{Metric-compatible families}
+
+Croscore and the URW base 35 families stand in for the Microsoft and Adobe
+fonts that cannot be redistributed:
+
+\showfont{Tinos}
+\showfont{Cousine}
+\showfont{Nimbus Roman}
+\showfont{Nimbus Sans}
+\showfont{Nimbus Mono PS}
+\showfont{C059}
+\showfont{URW Bookman}
+\showfont{Z003}
+
+\section*{Google Fonts families}
+
+\showfont{Cantarell}
+\showfont{Comic Neue}
+\showfont{OpenDyslexic}
+\showfont{Symbola}
+\showfont{Jura}
+\showfont{Elstob}
+
+\section*{Arabic and Hebrew}
+
+\showfont{Amiri}
+\showfont{KacstOne}
+
+\section*{Other scripts}
+
+\showfont{Charis SIL}
+\showfont{Doulos SIL}
+\showfont{Abyssinica SIL}
+\showfont{Ezra SIL}
+\showfont{Padauk}
+\showfont{Scheherazade}
+\showfont{Sophia Nubian}
+\showfont{GFS Artemisia}
+\showfont{GFS Didot}
+\showfont{GFS Neohellenic}
+\showfont{Baekmuk Gulim}
+\showfont{NanumGothic}
+\showfont{Garuda}
+\showfont{Loma}
+\showfont{Norasi}
+\showfont{Tlwg Typo}
+\showfont{Umpush}
+\showfont{Waree}
+\showfont{Lohit Devanagari}
+\showfont{Lohit Bengali}
+\showfont{Lohit Tamil}
+\showfont{Lohit Telugu}
+\showfont{Lohit Malayalam}
+\showfont{Samyak Devanagari}
+\showfont{Gargi}
+\showfont{Sahadeva}
+\showfont{Sarai}
+\showfont{Pagul}
+\showfont{Tibetan Machine Uni}
+\showfont{Khmer OS Battambang}
+\showfont{LKLUG}
+\showfont{Myanmar3}
+
+\section*{Noto, for the scripts without a family of their own}
+
+\showfont{Noto Sans Cherokee}
+\showfont{Noto Sans Balinese}
+\showfont{Noto Serif Yezidi}
+
+\end{document}

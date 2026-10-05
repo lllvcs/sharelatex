@@ -21,6 +21,7 @@ _minted*
 *.dep
 *.dpth
 *.dvi
+*.xdv
 *.eps
 *.fdb_latexmk
 *.fls

@@ -363,6 +363,14 @@ repeats the checks inside the built image, and `tests/compile.sh` compiles an
 MWE for every capability that was added (including `tests/knitr` for the R
 route).
 
+**For fonts specifically.** A family name is not the package name: read it out of
+the font file before you write it down, or CI fails on a name that was never
+right (`.research/font-check/` does this with `fontTools`, and it corrected three
+names). Check that a package exists on **both** Ubuntu releases the base image
+may be built on, and never add a font that can change what `serif`, `sans-serif`
+or `monospace` resolve to - a document that names no font has to keep rendering
+as it did.
+
 ---
 
 ## Pre-commit checklist

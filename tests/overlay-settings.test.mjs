@@ -182,6 +182,32 @@ test('the linked-url proxy is configured only for the url file type', () => {
   )
 })
 
+test('the compile container runs as the user that owns the compile directory', () => {
+  // clsi defaults this to TEXLIVE_IMAGE_USER or 'tex' (uid 1000), while the
+  // compile directories belong to www-data - a sibling container started as
+  // 'tex' cannot write into them.
+  assert.deepEqual(additionalSettings({ SANDBOXED_COMPILES: 'true' }), {
+    clsi: { docker: { user: 'www-data' } },
+  })
+})
+
+test('an explicit TEXLIVE_IMAGE_USER still wins', () => {
+  assert.deepEqual(
+    additionalSettings({
+      SANDBOXED_COMPILES: 'true',
+      TEXLIVE_IMAGE_USER: 'tex',
+    }),
+    {}
+  )
+})
+
+test('nothing is set about the compile user while sandboxed compiles are off', () => {
+  // Without SANDBOXED_COMPILES, clsi has no `docker` section at all, and
+  // creating half of one would be confusing.
+  assert.deepEqual(additionalSettings({ TEXLIVE_IMAGE_USER: 'tex' }), {})
+  assert.deepEqual(additionalSettings({}), {})
+})
+
 // --- assignDeep -------------------------------------------------------------
 
 test('nested settings are merged, not replaced', () => {

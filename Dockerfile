@@ -104,6 +104,119 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Without a UTF-8 locale Perl and R treat file names and log output as bytes.
 ENV LANG=C.UTF-8
 
+# The fonts Overleaf supports by family name through fontspec/xeCJK that the
+# packages above do not bring (see
+# https://www.overleaf.com/learn/latex/Questions/Which_OTF_or_TTF_fonts_are_supported_via_fontspec%3F).
+# A document that names one of them fails with "The font ... cannot be found"
+# when it is missing, which is the error this block exists to remove.
+#
+# Every package here was checked to exist in both Ubuntu 24.04 and 22.04, so the
+# block does not depend on which release the base image is built on, and nothing
+# is installed that could change how a fontless document is rendered: in
+# particular `fonts-ubuntu` is left out, because a document that names no font
+# has to keep rendering exactly as it did (tests/fonts-extra guards this).
+#
+#   Noto          the script coverage Overleaf itself recommends ("use the
+#                 relevant Google Noto font, as included in Ubuntu")
+#   croscore      Arimo / Tinos / Cousine, the metric-compatible equivalents of
+#                 Arial / Times New Roman / Courier New
+#   urw-base35    Nimbus Roman/Sans/Mono, C059, URW Bookman, Z003 - named in
+#                 Overleaf's list and otherwise only present as Type1 fonts,
+#                 which the fontconfig rule above hides from XeTeX on purpose
+#   SIL, GFS, Lohit, tlwg, ...  the non-Latin families of that list
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      fonts-noto-extra \
+      fonts-noto-mono \
+      fonts-croscore \
+      fonts-urw-base35 \
+      fonts-cantarell \
+      fonts-oxygen \
+      fonts-comic-neue \
+      fonts-opendyslexic \
+      fonts-symbola \
+      fonts-jura \
+      fonts-lemonada \
+      fonts-navilu \
+      fonts-yrsa-rasa \
+      fonts-elstob \
+      fonts-aenigma \
+      fonts-sil-charis \
+      fonts-sil-doulos \
+      fonts-sil-abyssinica \
+      fonts-sil-annapurna \
+      fonts-sil-ezra \
+      fonts-sil-padauk \
+      fonts-sil-scheherazade \
+      fonts-sil-sophia-nubian \
+      fonts-sil-andika \
+      fonts-sil-gentium \
+      fonts-hosny-amiri \
+      fonts-hosny-thabit \
+      fonts-kacst \
+      fonts-kacst-one \
+      fonts-paktype \
+      fonts-gfs-artemisia \
+      fonts-gfs-bodoni-classic \
+      fonts-gfs-complutum \
+      fonts-gfs-didot \
+      fonts-gfs-neohellenic \
+      fonts-gfs-olga \
+      fonts-gfs-porson \
+      fonts-gfs-solomos \
+      fonts-gfs-theokritos \
+      fonts-lohit-beng-assamese \
+      fonts-lohit-beng-bengali \
+      fonts-lohit-deva \
+      fonts-lohit-deva-marathi \
+      fonts-lohit-deva-nepali \
+      fonts-lohit-gujr \
+      fonts-lohit-guru \
+      fonts-lohit-knda \
+      fonts-lohit-mlym \
+      fonts-lohit-orya \
+      fonts-lohit-taml \
+      fonts-lohit-taml-classical \
+      fonts-lohit-telu \
+      fonts-samyak-deva \
+      fonts-samyak-mlym \
+      fonts-samyak-taml \
+      fonts-gargi \
+      fonts-sahadeva \
+      fonts-sarai \
+      fonts-pagul \
+      fonts-beng \
+      fonts-deva \
+      fonts-gujr \
+      fonts-guru \
+      fonts-knda \
+      fonts-mlym \
+      fonts-orya \
+      fonts-taml \
+      fonts-telu \
+      fonts-tlwg-garuda \
+      fonts-tlwg-kinnari \
+      fonts-tlwg-laksaman \
+      fonts-tlwg-loma \
+      fonts-tlwg-norasi \
+      fonts-tlwg-purisa \
+      fonts-tlwg-sawasdee \
+      fonts-tlwg-typewriter \
+      fonts-tlwg-typist \
+      fonts-tlwg-typo \
+      fonts-tlwg-umpush \
+      fonts-tlwg-waree \
+      fonts-tibetan-machine \
+      fonts-khmeros \
+      fonts-lklug-sinhala \
+      fonts-myanmar \
+      fonts-baekmuk \
+      fonts-nanum \
+      fonts-nanum-extra \
+      fonts-alee \
+      fonts-droid-fallback \
+      fonts-dejavu-extra \
+    && rm -rf /var/lib/apt/lists/*
+
 # TeX Live keeps its fonts in texmf-dist, where fontconfig does not look, so
 # they could only be used by file name ("FandolSong-Regular.otf") and not by
 # family name ("FandolSong"). Registering the two font directories makes the
@@ -244,6 +357,20 @@ RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -
         *"$family"*) echo "  fontconfig knows $family" ;; \
         *) echo "WARNING: fontconfig resolves $family to '$match'; documents selecting it by that name will not find it" ;; \
       esac ; \
+    done ; \
+    for family in Arimo Tinos Cousine 'Nimbus Roman' 'Nimbus Sans' Cantarell \
+                  'Comic Neue' OpenDyslexic Symbola Amiri KacstOne \
+                  'Charis SIL' 'Doulos SIL' 'Baekmuk Gulim' NanumGothic Garuda \
+                  'Lohit Devanagari' 'Tibetan Machine Uni' \
+                  'Khmer OS Battambang' Jura Elstob ; do \
+      match=$(fc-match -f '%{family}' "$family") ; \
+      case "$match" in \
+        *"$family"*) echo "  fontconfig knows $family" ;; \
+        *) echo "WARNING: fontconfig resolves $family to '$match'; tests/fonts-extra will say whether it compiles" ;; \
+      esac ; \
+    done ; \
+    for alias in serif sans-serif monospace ; do \
+      echo "  fc-match $alias -> $(fc-match -f '%{family}' "$alias") (installing fonts must not change this)" ; \
     done
 
 # TeX Live configuration, in the same texmf.cnf the shell_escape setting used to
