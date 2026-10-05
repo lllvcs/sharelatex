@@ -12,19 +12,36 @@
 
 ## 功能特性
 
-与官方 `sharelatex/sharelatex` 镜像相比，本镜像额外提供：
+与官方 `sharelatex/sharelatex` 镜像相比：
+
+**TeX Live 与编译工具链**
 
 - 完整更新的 TeX Live 安装，包含所有可用宏包
+- Overleaf 自己的 `latexmk` 配置——CE 镜像里的那份只有三行：R/knitr 文档、
+  glossaries、nomenclature、`feynmf`/`feynmp`、asymptote 与 metapost 所需的
+  辅助程序会被执行，*Check* 按钮可用，PDF 预览也能拿到 xref 数据——详见
+  [`texlive/README.md`](texlive/README.md)
+- 带 `knitr` 的 R，因此 `.Rnw`、`.Rtex` 文档也能编译
 - 额外的 TeX Live 与系统字体，包含**已随仓库内置**的中文字体集合
   （见 [`fonts/`](fonts/README.md)，构建镜像时无需联网下载字体）
 - TeX Live 的全部字体都注册到了 fontconfig，因此可以直接用**字体族名**调用；
   中文字体也按 TeX Live `zhmetrics` 度量（`uniyou20`、`unisong5b`、
   `gbkyou20` 等）所要求的文件名安装，详见[字体](#字体)
+- fontconfig 与 LuaTeX 的字体缓存在构建镜像时就会生成，因此新容器里的首次
+  编译不必再重建它们
 - 支持 `minted`
 - 通过 inkscape 支持 `svg` 图片
 - 支持 lilypond
 - 默认开启 shell-escape
+
+**CE 镜像出厂即关闭的 Overleaf 功能**
+
+- **带审阅面板的修订**（评论、修订区间、接受/拒绝），需手动开启，见
+  [修订与审阅面板](#修订与审阅面板)
+- **沙箱编译**：每个项目在自己的 TeX Live 容器里编译，需手动开启，见
+  [沙箱编译](#沙箱编译)
 - **OIDC（OpenID Connect）单点登录**，详见下文
+- 可配置的上传上限与链接地址（linked URLs），见[环境变量](#环境变量)
 
 ## 安装
 
@@ -53,7 +70,7 @@ services:
 > [!WARNING]
 > 不推荐这种方式，建议使用 Overleaf Toolkit。
 
-使用官方仓库中的
+使用[官方 GitHub](https://github.com/overleaf/overleaf) 中提供的
 [docker-compose.yml](https://github.com/overleaf/overleaf/blob/main/docker-compose.yml)，
 把镜像改为 `lvcs/sharelatex` 即可。同时请留意
 [官方 Wiki](https://github.com/overleaf/overleaf/wiki/Release-Notes--4.x.x#manually-setting-up-mongodb-as-a-replica-set)
@@ -262,6 +279,119 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   写入容器日志（`OIDC login failed`）。这些提示文字是英文的，而且页面只渲染本镜像
   已知的错误码，绝不会把提供方返回的内容直接显示出来。
 
+## 修订与审阅面板
+
+Overleaf 社区版其实已经带着整个功能——审阅面板、评论线程、document-updater 里的
+修订区间、工具栏上的 *Review*（审阅）模式开关——但它对外报告该功能不可用，因为后端
+有一个标志被硬编码为 `false`。本镜像补上了缺失的那个模块来把它翻转过来，因此该功能
+与 Overleaf 上的表现一致：
+
+```sh
+OVERLEAF_ENABLE_TRACK_CHANGES=true
+```
+
+其它什么都不用做：该功能的前端本来就在 CE 镜像里，而模块注册的路由正是前端所调用的
+那些。
+
+说明：
+
+- **默认关闭。** 打开它会改变每个项目提供的内容（多出一个面板、一个审阅模式、编辑器
+  里会出现评论），所以这是一个需要你决定的事。设置该变量后重启即可。
+- 只有运行中的实例才能展示的部分：某个用户所做的修改被归属到该用户名下、接受该修改
+  后标记会被移除、评论线程在刷新后依然存在。`tests/verify-overlay.sh` 会在镜像内检查
+  该模块是否加载、是否注册了它的路由、以及功能开关是否被打开。
+- 评论保存在 chat 服务中，修改本身保存在 document-updater 中；两者都随 CE 镜像提供
+  且未作改动。
+- `REQ_LOCKDOWN_MODE=throw` 与该功能不兼容（也与若干核心路由不兼容）；见
+  [overlay/README.md](overlay/README.md)。
+
+## 沙箱编译
+
+默认情况下，每个项目都在 **Overleaf 容器内部**编译，使用的是[字体](#字体)一节所述的
+TeX Live 安装。所谓「沙箱编译」，是把每次编译放到一个**独立的、短生命周期的** TeX Live
+镜像容器里执行。这正是 Overleaf Server Pro 提供的能力：CE 镜像已经为它做好了准备，
+但没有附带 runner。
+
+本镜像把 runner 补了回来，因此可以配合
+[ayaka-notes/texlive-full](https://github.com/ayaka-notes/texlive-full) 的 TeX Live
+镜像（或任何其它遵循 Overleaf 约定的镜像）使用该功能。
+
+> [!IMPORTANT]
+> 沙箱编译**不是**免费得到的加固措施：这些容器是通过 Docker socket 启动的，也就是说
+> Overleaf 容器因此获得了对宿主机 Docker 守护进程的控制权。如果你想要「每个项目一个
+> TeX Live 镜像」「每次编译相互隔离」，可以启用它，但不要把它当成防火墙的替代品。
+
+### 配置
+
+使用 Overleaf Toolkit 时，**必须设置 `SERVER_PRO=true`**——只有在该模式下 toolkit 才会
+挂载 Docker socket、才会拉取 TeX Live 镜像。同时也要设置 `OVERLEAF_IMAGE_NAME`，否则
+toolkit 会切换到 Server Pro 镜像：
+
+`config/overleaf.rc`
+
+```sh
+OVERLEAF_IMAGE_NAME=lvcs/sharelatex
+SERVER_PRO=true
+SIBLING_CONTAINERS_ENABLED=true
+DOCKER_SOCKET_PATH=/var/run/docker.sock
+```
+
+`config/variables.env`
+
+```sh
+# 每个项目可选的镜像（完整引用，逗号分隔）
+ALL_TEX_LIVE_DOCKER_IMAGES=ghcr.io/ayaka-notes/texlive-full:2026.1,ghcr.io/ayaka-notes/texlive-full:2025.1
+# 镜像列表里显示的名字（可选，按位置一一对应）
+ALL_TEX_LIVE_DOCKER_IMAGE_NAMES=TeX Live 2026,TeX Live 2025
+# 新建项目使用的镜像，必须是上面列表中的一项
+TEX_LIVE_DOCKER_IMAGE=ghcr.io/ayaka-notes/texlive-full:2026.1
+# clsi 编译目录的宿主机路径——兄弟容器看到的是宿主机而不是本容器，
+# 所以这里必须是宿主机的路径
+SANDBOXED_COMPILES_HOST_DIR_COMPILES=/absolute/path/to/data/overleaf/data/compiles
+SANDBOXED_COMPILES_HOST_DIR_OUTPUT=/absolute/path/to/data/overleaf/data/output
+SANDBOXED_COMPILES_HOST_DIR_CACHE=/absolute/path/to/data/overleaf/data/cache
+```
+
+这三个 `SANDBOXED_COMPILES_HOST_DIR_*` 取值就是 toolkit 的
+`${OVERLEAF_DATA_PATH}/data/...`，写成绝对路径即可（toolkit 自己的
+`lib/docker-compose.sibling-containers.yml` 只设置了 `SANDBOXED_COMPILES_HOST_DIR`）。
+
+原生 `docker compose` 部署需要同样的环境变量，另外还要挂载 socket：
+
+```yaml
+services:
+    sharelatex:
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+```
+
+### 它做了什么
+
+- 镜像列表会出现在项目设置里，项目会一直保留创建时所用的镜像；之后改动它，就会用新
+  镜像重新编译。
+- 新项目从 `TEX_LIVE_DOCKER_IMAGE` 开始。此前创建的项目没有记录镜像，它们会在默认
+  镜像里编译，而默认镜像同样是 `TEX_LIVE_DOCKER_IMAGE`（如果希望数据库里明确写出来，
+  可以执行 `bin/run-script scripts/backfill_project_image_name.mjs`）。
+- 编译容器以 `--network none`、`--cap-drop ALL`、`no-new-privileges` 以及镜像自带的
+  seccomp 配置运行，并且使用拥有编译目录的 `www-data` uid
+  （当 `SANDBOXED_COMPILES_SIBLING_CONTAINERS=true` 时，
+  `server-ce/config/env.sh` 会替你设置 `TEXLIVE_IMAGE_USER`）。
+
+### 容易出错的地方
+
+- **镜像 tag 必须以 TeX Live 年份开头**（`2026.1`、`2025.1`）。runner 会用 tag 拼出编译
+  容器里的 `PATH`；一个 tag 为 `6.3.0` 的镜像会被读成「TeX Live 6」，于是每次编译都
+  找不到 `latexmk`。这也是 `lvcs/sharelatex` 自身不能用作编译镜像的原因。
+- **`ALL_TEX_LIVE_DOCKER_IMAGES` 与 `TEX_LIVE_DOCKER_IMAGE` 必须一致**：每个镜像都要
+  位于同一个 registry 前缀之下，并且当前镜像必须在列表里。不符合的配置会在 web 服务
+  启动时报出来，并指明哪里不对。
+- **seccomp 配置很重要。** 当这份配置对 TeX Live 镜像来说太旧时，`minted` 会因权限错误
+  失败（texlive-full 随附的那份比属于本 clsi 的那份更小）。镜像随附的是与自身 clsi
+  匹配的那份。
+- Overleaf CE 会跳过自己的 TeX Live 预检（`check-texlive-images.mjs` 只在
+  `OVERLEAF_IS_SERVER_PRO=true` 时运行），因此镜像名写错会在第一次编译时暴露，而不是
+  在启动时。
+
 ## 字体
 
 镜像包含 TeX Live 安装（`scheme-full`，即 CTAN 字体归档中所有有 TeX Live 宏包
@@ -297,12 +427,52 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
   镜像内实际编译它们。
 - 内置的微软/苹果/Adobe 字体不可再分发，许可证情况见
   [`fonts/README.md`](fonts/README.md)。
+- **字体缓存。** 两个字体缓存都在构建镜像时生成（`fc-cache -fsv` 与
+  `luaotfload-tool --update`），否则新容器里的首次编译都会重建 LuaTeX 的字体名
+  数据库——慢到看起来像文档卡住了。LuaTeX 缓存是**故意**写进 TeX Live 目录树的：
+  `TEXMFVAR` 指向 `/var/lib/overleaf`，而部署时会把它挂载为卷，因此构建期写在
+  那里的东西在运行期是看不到的。
+- **`OSFONTDIR`** 在 `texmf.cnf` 中设置，作为除 fontconfig 配置之外访问系统字体的
+  第二条途径；同时 Type1 字体对 fontconfig 隐藏（XeTeX 无法内嵌它们，还会因此
+  出错）。
 
 ## 环境变量
 
 官方镜像支持的所有环境变量均保持不变（参见
 [Overleaf 文档](https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/overleaf-toolkit-configuration)）。
-本镜像新增的变量即上文 OIDC 章节中列出的那些。
+本镜像新增的变量如下：
+
+### 登录
+
+见上文 [OIDC 章节](#oidc-单点登录)：`OVERLEAF_OIDC_ISSUER`、
+`OVERLEAF_OIDC_WELL_KNOWN_URL`、`OVERLEAF_OIDC_AUTHORIZATION_URL`、
+`OVERLEAF_OIDC_TOKEN_URL`、`OVERLEAF_OIDC_USERINFO_URL`、
+`OVERLEAF_OIDC_CALLBACK_URL(S)`、`OVERLEAF_OIDC_CLIENT_ID`、
+`OVERLEAF_OIDC_CLIENT_SECRET`、`OVERLEAF_OIDC_SCOPE`、`OVERLEAF_OIDC_MATCHING`、
+`OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL`、`OVERLEAF_OIDC_LINK_MODE`、
+`OVERLEAF_OIDC_JWKS_URL`、`OVERLEAF_OIDC_REQUIRE_ID_TOKEN`、
+`OVERLEAF_ENABLE_LOCAL_LOGIN`、`OVERLEAF_LOGIN_INFO_TEXT`、
+`OVERLEAF_LOGIN_OIDC_BUTTON`、`OVERLEAF_OIDC_LOGIN_IN_NAVBAR`、
+`OVERLEAF_ENABLE_REGISTRATION`。
+
+### 功能
+
+| 变量 | 默认值 | 含义 |
+| --- | --- | --- |
+| `OVERLEAF_ENABLE_TRACK_CHANGES` | `false` | 设为 `true` 即开启修订与审阅面板，见[修订与审阅面板](#修订与审阅面板)。 |
+| `SANDBOXED_COMPILES` | `false` | 设为 `true` 即把每个项目放到自己的 TeX Live 容器里编译，见[沙箱编译](#沙箱编译)。 |
+| `ALL_TEX_LIVE_DOCKER_IMAGES` | – | 项目可以用来编译的镜像，写完整引用，以逗号分隔。与 `SANDBOXED_COMPILES` 一起使用时必填。 |
+| `ALL_TEX_LIVE_DOCKER_IMAGE_NAMES` | 镜像名本身 | 镜像列表里显示的名称，以逗号分隔、按位置对应。名称中可以有空格。 |
+| `TEX_LIVE_DOCKER_IMAGE` | – | 新项目默认使用的镜像。与 `SANDBOXED_COMPILES` 一起使用时必填，且必须是 `ALL_TEX_LIVE_DOCKER_IMAGES` 中的一项。其 tag 必须以 TeX Live 年份开头。 |
+| `IMAGE_ROOT` | 由第一个镜像推导 | 与项目的裸镜像名一起保存的 registry 前缀。仅在无法推导时才需要设置，而且此时每个镜像都必须位于该前缀之下。 |
+| `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | – | clsi 进行编译的目录在宿主机上的路径。与 `SANDBOXED_COMPILES` 一起使用时必填（缺少它 clsi 会拒绝启动）。 |
+| `SANDBOXED_COMPILES_HOST_DIR_OUTPUT` | – | 输出目录在宿主机上的路径，用于把输出写到别处的编译。 |
+| `SANDBOXED_COMPILES_HOST_DIR_CACHE` | – | clsi 缓存在宿主机上的路径，以便做 PNG 转换的容器能够访问到它。 |
+| `SANDBOXED_COMPILES_SIBLING_CONTAINERS` | `false` | 在单容器部署中设为 `true`；它让容器以 `www-data` 身份运行编译容器，而 `www-data` 正是编译目录的所有者。由基础镜像处理。 |
+| `MAX_UPLOAD_SIZE` | `50` | 上传上限，单位为**兆字节**。zip 因内容解压后过大而被拒绝的那个阈值也随之提高（是该上限的六倍，且不低于官方镜像允许的 300 MB）。 |
+| `ENABLED_LINKED_FILE_TYPES` | 空 | 提供哪些链接文件类型，以逗号分隔（`url`、`project_file`、`project_output_file`）。使用 `url` 时，本镜像还会把 CE 镜像运行却从未指向的 linked-URL 代理配置好，使链接地址真正可用。 |
+| `LINKED_URL_PROXY_HOST` | `127.0.0.1` | linked-URL 代理的主机，用于各服务运行在独立容器中的部署。 |
+| `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | 容器的设置文件。它会加载并扩展基础镜像的那一份；**替换它同时也会移除本镜像的模块注册**——见 [overlay/README.md](overlay/README.md)。 |
 
 ## 常见疑问
 
@@ -318,6 +488,26 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
   交错现象，内容本身没问题。
 - `*** Running /etc/my_init.pre_shutdown.d/00_close_site ...`：这是容器**被停止**
   时的收尾流程，不是崩溃。
+- `OIDC: OVERLEAF_OIDC_JWKS_URL is not set and the provider published no
+  jwks_uri ...`：这是关于 identity token 的警告，不是启动失败；见
+  [Identity token 校验](#identity-token-校验)。
+
+### 只有第一次编译慢
+
+那是字体缓存，不是文档本身：见[字体](#字体)。它出现在构建镜像时漏掉了
+`luaotfload-tool --update` 这一步的情况下，而构建过程会校验这一点。
+
+### SyncTeX 很慢（每次点击 20-30 秒）
+
+已知问题（[overleaf/overleaf#1150](https://github.com/overleaf/overleaf/issues/1150)）：
+当部署的 TLS 终结端使用 HTTP/2 时，只有 SyncTeX 请求会卡住。这不是本镜像能改的
+——容器内的 nginx 只讲 HTTP/1.1——因此请从反向代理的 `listen` 指令里去掉 `http2`。
+
+### 该有的功能却没有
+
+检查设置文件在启动时打印的那行日志（`settings.overlay:`）——它会列出已开启的模块。
+如果这行日志完全没有出现，说明 `OVERLEAF_CONFIG` 被覆盖了，而覆盖它会替换本镜像的
+设置文件，模块注册也随之丢失。
 
 ## 构建镜像
 
@@ -347,8 +537,19 @@ build ...`）。
 
 ```sh
 docker build -t sharelatex .
+# 镜像内的 overlay 自检：模块、设置、TeX Live 配置
+docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
+    sharelatex -c "/bin/bash /tests/verify-overlay.sh"
+# 最小可编译示例
 docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
     sharelatex -c "/bin/bash /tests/compile.sh"
+```
+
+不需要镜像的模块测试也可以在宿主机上运行：
+
+```sh
+node --test tests/oidc-*.test.mjs tests/overlay-settings.test.mjs \
+            tests/sandboxed-compiles-images.test.mjs
 ```
 
 ## 与上游镜像保持同步
@@ -360,11 +561,24 @@ docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
 新版本应用悄悄混在一起。此时请按照
 [overlay/README.md](overlay/README.md) 中的步骤重新适配 overlay。
 
+overlay 还在三处依赖 CE 镜像的*形态*，而这些地方可能因基础镜像更新而变化；构建会
+检查它们，失败时打印一条说明该做什么的消息：
+
+- 校验和受检查的那两个文件（`AuthenticationController.mjs`、`router.mjs`）；
+- `services/clsi/app/js/CommandRunner.js` 必须导入 Docker runner（overlay 以某个
+  release 可能使用的两个名字提供了它）；
+- `Dockerfile` 追加内容的那些 TeX Live 配置文件，以及编译工具链所调用的程序。
+
 ## 致谢
 
-- [Overleaf](https://github.com/overleaf/overleaf)：Overleaf CE 本体
+- [Overleaf](https://github.com/overleaf/overleaf)：Overleaf CE 本体，以及
+  `texlive/LatexMk`、`run-chktex.sh` 与 `patchSynctex.R`
 - [tuetenk0pp/sharelatex-full](https://github.com/tuetenk0pp/sharelatex-full)：
   本仓库的基础
+- [ayaka-notes/ayakaleaf-pro](https://github.com/ayaka-notes/ayakaleaf-pro)：
+  修订模块与 clsi 的 Docker runner，以及对「CE 镜像保留了什么、移除了什么」的分析
+- [ayaka-notes/texlive-full](https://github.com/ayaka-notes/texlive-full)：
+  TeX Live 工具链文件与预先生成的字体缓存
 - [stugen-admins/forks/overleaf-oidc](https://gitlab.informatik.uni-bremen.de/stugen-admins/forks/overleaf-oidc)：
   本次 OIDC 移植所依据的补丁
 - [smhaller/ldap-overleaf-sl](https://github.com/smhaller/ldap-overleaf-sl)：

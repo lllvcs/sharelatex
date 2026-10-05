@@ -15,7 +15,15 @@ Docker image, based on
 
 Compared to the official `sharelatex/sharelatex` image:
 
+**TeX Live and the compile toolchain**
+
 - fully updated TeX Live installation, including all available packages
+- Overleaf's own `latexmk` configuration, which the CE image ships as three
+  lines: R/knitr documents, glossaries, nomenclature, `feynmf`/`feynmp`,
+  asymptote and metapost get their auxiliary programs run, the *Check* button
+  works, and the PDF preview gets its xref data - see
+  [`texlive/README.md`](texlive/README.md)
+- R with `knitr`, so `.Rnw` and `.Rtex` documents compile
 - additional TeX Live and system fonts, including a bundled collection of
   Chinese fonts (vendored in [`fonts/`](fonts/README.md), so nothing has to be
   downloaded while building the image)
@@ -23,11 +31,22 @@ Compared to the official `sharelatex/sharelatex` image:
   family name, and the Chinese fonts are installed under the names the TeX Live
   `zhmetrics` metrics (`uniyou20`, `unisong5b`, `gbkyou20`, ...) expect, see
   [Fonts](#fonts)
+- the fontconfig and LuaTeX font caches are built while the image is built, so
+  the first compile in a fresh container does not have to rebuild them
 - support for `minted`
 - support for `svg` images through the addition of inkscape
 - support for lilypond
 - shell-escape enabled by default
+
+**Overleaf features that the CE image ships switched off**
+
+- **track changes with the review panel** (comments, ranges, accept/reject),
+  opt-in - see [Track changes](#track-changes-and-the-review-panel)
+- **sandboxed compiles**: compile each project in its own TeX Live container,
+  opt-in - see [Sandboxed compiles](#sandboxed-compiles)
 - **OIDC (OpenID Connect) single sign-on**, see below
+- a configurable upload limit and linked URLs, see
+  [Environment variables](#environment-variables)
 
 ## Installation
 
@@ -301,6 +320,131 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
   English; the page renders only the codes this image knows, never anything the
   provider returned.
 
+## Track changes and the review panel
+
+Overleaf Community Edition ships the whole feature - the review panel, the
+comment threads, the ranges in the document-updater, the *Review* mode switch in
+the toolbar - but reports it as unavailable, because one flag in the backend is
+hard-coded to `false`. This image adds the missing module that flips it, so the
+feature works as it does on Overleaf:
+
+```sh
+OVERLEAF_ENABLE_TRACK_CHANGES=true
+```
+
+Nothing else is needed: the frontend of the feature is part of the CE image, and
+the routes the module registers are the ones the frontend calls.
+
+Notes:
+
+- **Off by default.** Turning it on changes what every project offers (a new
+  panel, a review mode, comments that appear in the editor), so it is a
+  decision. Set the variable and restart.
+- What only a running instance can show: that a change made by one user is
+  attributed to them, that accepting it removes the markup, and that a comment
+  thread survives a reload. `tests/verify-overlay.sh` checks in the image that
+  the module loads, registers its routes and switches the feature flag on.
+- Comments are stored in the chat service and the changes themselves in the
+  document-updater; both are part of the CE image and unchanged.
+- `REQ_LOCKDOWN_MODE=throw` is incompatible with this feature (and with several
+  core routes); see [overlay/README.md](overlay/README.md).
+
+## Sandboxed compiles
+
+By default every project is compiled **inside the Overleaf container**, with the
+TeX Live installation described in [Fonts](#fonts). "Sandboxed compiles" run each
+compile in a **separate, short-lived container** of a TeX Live image instead.
+That is what Overleaf Server Pro offers, and the CE image is prepared for it but
+does not ship the runner.
+
+This image adds the runner back, so the feature can be used with the TeX Live
+images of [ayaka-notes/texlive-full](https://github.com/ayaka-notes/texlive-full)
+(or any other image that follows Overleaf's conventions).
+
+> [!IMPORTANT]
+> Sandboxed compiles are **not** a hardening measure you get for free: the
+> containers are started through the Docker socket, which gives the Overleaf
+> container control over the Docker daemon of the host. Enable it when you want
+> per-project TeX Live images and per-compile isolation, not as a substitute for
+> a firewall.
+
+### Configuration
+
+With the Overleaf Toolkit, **`SERVER_PRO=true` is required** - the toolkit only
+mounts the Docker socket and only pulls the TeX Live images in that mode. Set
+`OVERLEAF_IMAGE_NAME` as well, or the toolkit switches to the Server Pro image:
+
+`config/overleaf.rc`
+
+```sh
+OVERLEAF_IMAGE_NAME=lvcs/sharelatex
+SERVER_PRO=true
+SIBLING_CONTAINERS_ENABLED=true
+DOCKER_SOCKET_PATH=/var/run/docker.sock
+```
+
+`config/variables.env`
+
+```sh
+# every image a project may be compiled in (full references, comma separated)
+ALL_TEX_LIVE_DOCKER_IMAGES=ghcr.io/ayaka-notes/texlive-full:2026.1,ghcr.io/ayaka-notes/texlive-full:2025.1
+# what the image list shows (optional, matched by position)
+ALL_TEX_LIVE_DOCKER_IMAGE_NAMES=TeX Live 2026,TeX Live 2025
+# the image new projects start on; has to be one of the list above
+TEX_LIVE_DOCKER_IMAGE=ghcr.io/ayaka-notes/texlive-full:2026.1
+# host paths of the directories clsi compiles in - the sibling container sees
+# the host, not this container, so these have to be host paths
+SANDBOXED_COMPILES_HOST_DIR_COMPILES=/absolute/path/to/data/overleaf/data/compiles
+SANDBOXED_COMPILES_HOST_DIR_OUTPUT=/absolute/path/to/data/overleaf/data/output
+SANDBOXED_COMPILES_HOST_DIR_CACHE=/absolute/path/to/data/overleaf/data/cache
+```
+
+The three `SANDBOXED_COMPILES_HOST_DIR_*` values are `${OVERLEAF_DATA_PATH}/data/...`
+of the toolkit, written as absolute paths (the toolkit's own
+`lib/docker-compose.sibling-containers.yml` sets only `SANDBOXED_COMPILES_HOST_DIR`).
+
+A plain `docker compose` setup needs the same environment plus the socket mount:
+
+```yaml
+services:
+    sharelatex:
+        volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+```
+
+### What it does
+
+- The image list appears in the project settings, and a project keeps the image
+  it was created with; changing it later recompiles from the new image.
+- New projects start on `TEX_LIVE_DOCKER_IMAGE`. Projects that were created
+  before have no image recorded; they compile in the default image, which is
+  `TEX_LIVE_DOCKER_IMAGE` as well (`bin/run-script scripts/backfill_project_image_name.mjs`
+  writes it into the database if you want it to be explicit).
+- The compile containers run with `--network none`, `--cap-drop ALL`,
+  `no-new-privileges` and the seccomp profile the image ships, under the
+  `www-data` uid that owns the compile directory
+  (`server-ce/config/env.sh` sets `TEXLIVE_IMAGE_USER` for you when
+  `SANDBOXED_COMPILES_SIBLING_CONTAINERS=true`).
+
+### Things that are easy to get wrong
+
+- **The image tag has to start with the TeX Live year** (`2026.1`, `2025.1`).
+  The runner builds the `PATH` inside the compile container from the tag; an
+  image tagged `6.3.0` would be read as "TeX Live 6" and every compile would
+  fail to find `latexmk`. This is also why `lvcs/sharelatex` itself cannot be
+  used as a compile image.
+- **`ALL_TEX_LIVE_DOCKER_IMAGES` and `TEX_LIVE_DOCKER_IMAGE` have to agree**:
+  every image has to live under one registry prefix, and the current image has to
+  be part of the list. A configuration that does not is reported when the web
+  service starts, naming what is wrong.
+- **The seccomp profile matters.** `minted` fails with a permission error when
+  the profile is too old for the TeX Live image (the copy shipped with
+  texlive-full is smaller than the one belonging to this clsi). The image ships
+  the one that matches its clsi.
+- Overleaf CE skips its own TeX Live preflight (`check-texlive-images.mjs` runs
+  only with `OVERLEAF_IS_SERVER_PRO=true`), so a mistyped image name surfaces on
+  the first compile rather than at startup.
+
 ## Fonts
 
 The image contains every font of the TeX Live installation (`scheme-full`,
@@ -344,13 +488,54 @@ Notes:
   both routes and are compiled by CI inside the image.
 - The vendored Microsoft/Apple/Adobe fonts are not redistributable; see
   [`fonts/README.md`](fonts/README.md).
+- **Caches.** Both font caches are built while the image is built
+  (`fc-cache -fsv` and `luaotfload-tool --update`), otherwise the first compile
+  in a fresh container would rebuild the LuaTeX name database - slow enough to
+  look like a hanging document. The LuaTeX cache is written to the TeX Live tree
+  on purpose: `TEXMFVAR` points into `/var/lib/overleaf`, which a deployment
+  mounts as a volume, so anything written there at build time would be invisible
+  at runtime.
+- **`OSFONTDIR`** is set in `texmf.cnf` as a second route to the system fonts,
+  next to the fontconfig configuration, and Type1 fonts are hidden from
+  fontconfig (XeTeX cannot embed them and gets confused by them).
 
 ## Environment variables
 
 All variables of the official image remain available (see the
 [Overleaf documentation](https://docs.overleaf.com/on-premises/configuration/overleaf-toolkit/overleaf-toolkit-configuration)).
-The variables added by this image are the ones documented in the OIDC section
-above.
+The variables this image adds:
+
+### Login
+
+Documented in the [OIDC section](#oidc-single-sign-on) above:
+`OVERLEAF_OIDC_ISSUER`, `OVERLEAF_OIDC_WELL_KNOWN_URL`,
+`OVERLEAF_OIDC_AUTHORIZATION_URL`, `OVERLEAF_OIDC_TOKEN_URL`,
+`OVERLEAF_OIDC_USERINFO_URL`, `OVERLEAF_OIDC_CALLBACK_URL(S)`,
+`OVERLEAF_OIDC_CLIENT_ID`, `OVERLEAF_OIDC_CLIENT_SECRET`, `OVERLEAF_OIDC_SCOPE`,
+`OVERLEAF_OIDC_MATCHING`, `OVERLEAF_OIDC_TRUST_UNVERIFIED_EMAIL`,
+`OVERLEAF_OIDC_LINK_MODE`, `OVERLEAF_OIDC_JWKS_URL`,
+`OVERLEAF_OIDC_REQUIRE_ID_TOKEN`, `OVERLEAF_ENABLE_LOCAL_LOGIN`,
+`OVERLEAF_LOGIN_INFO_TEXT`, `OVERLEAF_LOGIN_OIDC_BUTTON`,
+`OVERLEAF_OIDC_LOGIN_IN_NAVBAR`, `OVERLEAF_ENABLE_REGISTRATION`.
+
+### Features
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `OVERLEAF_ENABLE_TRACK_CHANGES` | `false` | Set to `true` to switch on track changes and the review panel, see [Track changes](#track-changes-and-the-review-panel). |
+| `SANDBOXED_COMPILES` | `false` | Set to `true` to compile each project in its own TeX Live container, see [Sandboxed compiles](#sandboxed-compiles). |
+| `ALL_TEX_LIVE_DOCKER_IMAGES` | – | The images a project may be compiled in, as full references, separated by commas. Required with `SANDBOXED_COMPILES`. |
+| `ALL_TEX_LIVE_DOCKER_IMAGE_NAMES` | the image names | What the image list shows, separated by commas and matched by position. Names may contain spaces. |
+| `TEX_LIVE_DOCKER_IMAGE` | – | The image new projects start on. Required with `SANDBOXED_COMPILES`, and has to be one of `ALL_TEX_LIVE_DOCKER_IMAGES`. Its tag has to start with the TeX Live year. |
+| `IMAGE_ROOT` | derived from the first image | The registry prefix that is stored with the bare image name of a project. Only needed when it cannot be derived, and then every image has to live under it. |
+| `SANDBOXED_COMPILES_HOST_DIR_COMPILES` | – | Host path of the directory clsi compiles in. Required with `SANDBOXED_COMPILES` (clsi refuses to start without it). |
+| `SANDBOXED_COMPILES_HOST_DIR_OUTPUT` | – | Host path of the output directory, for compiles that write their output elsewhere. |
+| `SANDBOXED_COMPILES_HOST_DIR_CACHE` | – | Host path of the clsi cache, so that a PNG conversion container can reach it. |
+| `SANDBOXED_COMPILES_SIBLING_CONTAINERS` | `false` | Set to `true` in the single-container setup; it makes the container run the compile containers as `www-data`, which owns the compile directory. Handled by the base image. |
+| `MAX_UPLOAD_SIZE` | `50` | Upload limit in **megabytes**. The limit at which a zip is refused because its contents would expand too far grows with it (it is six times the limit, and never below the 300 MB the official image allows). |
+| `ENABLED_LINKED_FILE_TYPES` | empty | Which linked-file types to offer, comma separated (`url`, `project_file`, `project_output_file`). With `url`, this image also configures the linked-URL proxy that the CE image runs but never points at, so that linked URLs work. |
+| `LINKED_URL_PROXY_HOST` | `127.0.0.1` | Host of the linked-URL proxy, for a setup in which the services run in separate containers. |
+| `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | The settings file of the container. It loads the one of the base image and extends it; **replacing it also removes the module registration of this image** - see [overlay/README.md](overlay/README.md). |
 
 ## Troubleshooting
 
@@ -368,6 +553,30 @@ above.
   one stream; the same message is fine, just interleaved.
 - `*** Running /etc/my_init.pre_shutdown.d/00_close_site ...` appears when the
   container is being stopped, it is not a crash.
+- `OIDC: OVERLEAF_OIDC_JWKS_URL is not set and the provider published no
+  jwks_uri ...` is a warning about the identity token, not a failed start; see
+  [Identity token verification](#identity-token-verification).
+
+### A compile is slow only the first time
+
+That is the font cache, not the document: see [Fonts](#fonts). It happens when
+the image was built without the `luaotfload-tool --update` step, which the
+build verifies.
+
+### SyncTeX is slow (20-30 seconds per click)
+
+Known issue ([overleaf/overleaf#1150](https://github.com/overleaf/overleaf/issues/1150)):
+when the deployment's TLS terminator speaks HTTP/2, only the SyncTeX requests
+hang. It is not something this image can change - the nginx inside the container
+speaks HTTP/1.1 - so drop `http2` from the `listen` directive of your reverse
+proxy.
+
+### A feature that should be there is not
+
+Check the log line the settings file prints at startup (`settings.overlay:`) -
+it names the modules that were switched on. If the line is missing entirely,
+`OVERLEAF_CONFIG` was overridden, which replaces the settings file of this image
+and with it the module registration.
 
 ## Building the image
 
@@ -401,8 +610,19 @@ build ...`).
 
 ```sh
 docker build -t sharelatex .
+# the overlay inside the image: modules, settings, TeX Live configuration
+docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
+    sharelatex -c "/bin/bash /tests/verify-overlay.sh"
+# the minimal working examples
 docker run --rm --volume "$(pwd)/tests:/tests" --entrypoint=/bin/bash \
     sharelatex -c "/bin/bash /tests/compile.sh"
+```
+
+The module tests (everything that needs no image) also run on the host:
+
+```sh
+node --test tests/oidc-*.test.mjs tests/overlay-settings.test.mjs \
+            tests/sandboxed-compiles-images.test.mjs
 ```
 
 ## Staying in sync with the upstream image
@@ -415,11 +635,28 @@ drives the base image version) is updated, the build fails instead of silently
 mixing the overlay with a newer application version. In that case, re-base the
 overlay as described in [overlay/README.md](overlay/README.md).
 
+The overlay also depends on the *shape* of the CE image in three places that a
+base image update can change; the build checks them and fails with a message
+naming what to do:
+
+- the two files whose checksum is verified (`AuthenticationController.mjs`,
+  `router.mjs`);
+- `services/clsi/app/js/CommandRunner.js` having to import a Docker runner (the
+  overlay ships it under both names a release may use);
+- the TeX Live configuration files the `Dockerfile` appends to and the programs
+  the compile toolchain calls.
+
 ## Credits
 
-- [Overleaf](https://github.com/overleaf/overleaf) for Overleaf CE
+- [Overleaf](https://github.com/overleaf/overleaf) for Overleaf CE and for
+  `texlive/LatexMk`, `run-chktex.sh` and `patchSynctex.R`
 - [tuetenk0pp/sharelatex-full](https://github.com/tuetenk0pp/sharelatex-full),
   the base of this repository
+- [ayaka-notes/ayakaleaf-pro](https://github.com/ayaka-notes/ayakaleaf-pro) for
+  the track-changes module and the clsi Docker runner, and for the analysis of
+  what the CE image keeps and what it removes
+- [ayaka-notes/texlive-full](https://github.com/ayaka-notes/texlive-full) for
+  the TeX Live toolchain files and the pre-built font caches
 - [stugen-admins/forks/overleaf-oidc](https://gitlab.informatik.uni-bremen.de/stugen-admins/forks/overleaf-oidc)
   for the OIDC patch this port is based on
 - [smhaller/ldap-overleaf-sl](https://github.com/smhaller/ldap-overleaf-sl)

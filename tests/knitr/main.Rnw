@@ -1,0 +1,22 @@
+% A document whose source is R, knitted by knitr.
+%
+% `Rnw` is one of the root document extensions Overleaf accepts, and clsi hands
+% the file to latexmk unchanged, which turns it into a .tex through the custom
+% dependency in texlive/LatexMk (`add_cus_dep('Rnw', 'tex', 0, 'do_knitr')`).
+% Nothing else in the image can knit an .Rnw, so this example stops compiling
+% when that file is missing - and it proves at the same time that R, the knitr
+% package and the UTF-8 locale work.
+%
+% The chunk writes plain LaTeX (`results='asis'`) instead of a verbatim block,
+% so the example does not depend on knitr's syntax highlighting or on the
+% packages it would pull in for it.
+\documentclass{article}
+\begin{document}
+
+\section*{knitr}
+
+<<echo=FALSE, results='asis'>>=
+cat('Two plus two is', 2 + 2, '.\\par\n')
+@
+
+\end{document}

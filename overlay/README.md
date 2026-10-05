@@ -1,15 +1,24 @@
-# Overlay: OIDC login support for Overleaf CE
+# Overlay
 
-This directory contains complete replacement files that are copied into the
-`sharelatex/sharelatex` image to add OpenID Connect (OIDC) single sign-on.
+This directory contains complete replacement files and new files that are copied
+into the `sharelatex/sharelatex` image. It adds:
+
+| Area | What it adds | Switched on by |
+| --- | --- | --- |
+| `services/web/app/src/Features/Authentication/Oidc*.mjs`, `AuthenticationController.mjs`, `Server.mjs`, `router.mjs`, `views/user/login*.pug`, ... | OpenID Connect single sign-on | `OVERLEAF_OIDC_ISSUER` |
+| `services/web/modules/track-changes/` | track changes and the review panel (comments, ranges, accept/reject) | `OVERLEAF_ENABLE_TRACK_CHANGES` |
+| `services/web/modules/sandboxed-compiles/` | which TeX Live image a project compiles in | `SANDBOXED_COMPILES` |
+| `services/clsi/app/js/DockerRunner.js`, `DockerLockManager.js`, `seccomp/clsi-profile.json` | the compile service that runs each project in its own container (a Server Pro file) | `SANDBOXED_COMPILES` |
+| `etc/overleaf/settings.overlay.cjs`, `overlay-modules.cjs` | module registration, `MAX_UPLOAD_SIZE`, the linked-URL proxy | `OVERLEAF_CONFIG` |
 
 The approach is the same as the one used by
 [smhaller/ldap-overleaf-sl](https://github.com/smhaller/ldap-overleaf-sl):
 instead of rebuilding Overleaf from source, the files are overwritten inside
 the image. Overleaf runs its backend directly from these source files
-(`app/src/**/*.mjs`, `app/views/**/*.pug`), so no compilation step is needed.
+(`app/src/**/*.mjs`, `modules/**/*.mjs`, `app/views/**/*.pug`), so no
+compilation step is needed.
 
-The implementation is a port of the patches from
+The OIDC implementation is a port of the patches from
 [stugen-admins/forks/overleaf-oidc](https://gitlab.informatik.uni-bremen.de/stugen-admins/forks/overleaf-oidc)
 (which in turn is based on the Overleaf fork of the fachschaften.org admin
 team), adapted to Overleaf `6.3.0` and reworked to avoid adding new npm
@@ -24,6 +33,20 @@ dependencies:
 - user creation/updating follows the `6.x` API (`UserCreator.createNewUser`
   requires an `analyticsId`, confirms the email through `options.confirmedAt`
   and synchronises the profile with the identity provider on every login).
+
+The track-changes module and the Docker runner are ports from
+[ayaka-notes/ayakaleaf-pro](https://github.com/ayaka-notes/ayakaleaf-pro) (an
+Overleaf CE fork with the Server Pro features restored), which is where the
+knowledge of *which* piece CE is missing comes from; see
+[`DEVELOP_EXPERIMENT.MD`](../DEVELOP_EXPERIMENT.MD).
+
+The important difference to that fork: it rebuilds Overleaf from source, so it
+can also ship new frontend code. The overlay cannot. Everything it adds is
+therefore **backend or configuration only** - which is exactly why track changes
+and sandboxed compiles are portable (their user interface is part of the CE
+core) and the AI assistant is not (its components are compiled into the
+frontend bundle at build time).
+
 
 ## Base version
 
@@ -54,7 +77,23 @@ application around them.
      sha256sum /overleaf/services/web/app/src/Features/Authentication/AuthenticationController.mjs \
                /overleaf/services/web/app/src/router.mjs
    ```
-5. Update `overlay/README.md` (this file) with the new base version.
+5. Check the things the overlay assumes about the base image, all of which the
+   `Dockerfile` reports or verifies during the build:
+   - `services/clsi/app/js/CommandRunner.js` still imports a Docker runner, and
+     `services/clsi/config/settings.defaults.cjs` still checks for one - print
+     their names and adjust the files in `services/clsi/app/js/`;
+   - `services/web/app/src/infrastructure/Modules.mjs` still loads modules from
+     `Settings.moduleImportSequence`, and `ProjectEditorHandler.mjs` still has
+     the `trackChangesAvailable` flag the track-changes module flips;
+   - `ProjectOptionsHandler.mjs` / `ProjectCreationHandler.mjs` still read
+     `allowedImageNames`, `imageRoot` and `currentImageName`;
+   - the TeX Live layout the `Dockerfile` relies on (`/usr/local/texlive/<year>`,
+     `texmf.cnf`, the luaotfload name database, `dvipdfmx-unsafe.cfg`) and the
+     3-line `/usr/local/share/latexmk/LatexMk` that `texlive/` replaces.
+6. Re-check that the frontend still reaches the track-changes UI through the
+   project payload (`features.trackChangesVisible`) rather than through
+   `Settings.overleafModuleImports`; see `DEVELOP_SKILL.MD`, S14.
+7. Update `overlay/README.md` (this file) with the new base version.
 
 For convenience, the files can be extracted from the image without starting
 it:
@@ -66,6 +105,8 @@ docker rm tmp
 ```
 
 ## Modified files
+
+### OIDC login
 
 | File | Change |
 | --- | --- |
@@ -86,6 +127,41 @@ docker rm tmp
 | `app/views/user/login-oidc-link.pug` | **new file**: the page that asks for the password of an existing account before an OIDC identity is bound to it |
 | `app/views/layout/navbar-marketing.pug` | optional SSO button in the navigation bar |
 
+### Track changes and the review panel
+
+| File | Change |
+| --- | --- |
+| `modules/track-changes/index.mjs` | **new file**: sets `ProjectEditorHandler.trackChangesAvailable = true`, the one switch that keeps the whole feature hidden in CE, and registers the router |
+| `modules/track-changes/app/src/TrackChangesRouter.mjs` | **new file**: the eleven routes of the feature (toggle track changes, accept changes, ranges, change authors, threads, comment create/edit/delete, resolve, reopen, delete thread), each behind the core `AuthorizationMiddleware` |
+| `modules/track-changes/app/src/TrackChangesController.mjs` | **new file**: the handlers. Everything they call exists in CE core; the only import outside of it is `p-limit`, which is a declared dependency of `@overleaf/web` in the image. **Deviates from the original in one place**: `acceptChanges` also passes the accepting user id (the ported version passed three of the four arguments, so the `changesAccepted` hook received `undefined`) |
+
+### Sandboxed compiles
+
+| File | Change |
+| --- | --- |
+| `modules/sandboxed-compiles/index.mjs` | **new file**: fills `Settings.imageRoot`, `Settings.allowedImageNames` and `Settings.currentImageName`, the three settings the CE core reads but never sets |
+| `modules/sandboxed-compiles/app/src/TexLiveImages.mjs` | **new file**: derives those three values from `ALL_TEX_LIVE_DOCKER_IMAGES`, `ALL_TEX_LIVE_DOCKER_IMAGE_NAMES`, `TEX_LIVE_DOCKER_IMAGE` and `IMAGE_ROOT`, and refuses a configuration whose parts contradict each other; imports only Node built-ins, so `tests/sandboxed-compiles-images.test.mjs` can test it on its own |
+| `services/clsi/app/js/DockerRunner.js` | **new file**: the compile runner that starts a container per compile (a Server Pro file the CE image does not ship; CE only ships its unit test). Ported from ayakaleaf, unchanged |
+| `services/clsi/app/js/DockerLockManager.js` | **new file**: the lock `DockerRunner` uses, also a Server Pro file |
+| `services/clsi/app/js/DockerRunner.mjs` | **new file**: a one-line re-export of `DockerRunner.js`. The CE code names the runner in two places (`CommandRunner.js` imports it, `config/settings.defaults.cjs` checks that it exists) and releases have used both extensions; shipping both names makes the overlay independent of that |
+| `services/clsi/seccomp/clsi-profile.json` | **new file**: the seccomp profile the compile containers run under. `config/settings.defaults.cjs` reads this path and exits when it is missing, so it is required, not optional |
+
+### Settings
+
+| File | Change |
+| --- | --- |
+| `etc/overleaf/settings.overlay.cjs` | **new file**: what `OVERLEAF_CONFIG` points at. Loads `/etc/overleaf/settings.js` of the base image (which is no longer replaced, only read) and adds the settings below |
+| `etc/overleaf/overlay-modules.cjs` | **new file**: which modules the environment asks for, how they are appended to `moduleImportSequence` of the base image, and the two settings that only exist here (`MAX_UPLOAD_SIZE`, the linked-URL proxy); imports only Node built-ins, tested by `tests/overlay-settings.test.mjs` |
+
+The `settings.overlay.cjs` file is installed at `/etc/overleaf/settings.overlay.cjs`
+and the `Dockerfile` points `OVERLEAF_CONFIG` at it. That variable is already set
+by the CE image (to `/etc/overleaf/settings.js`, which this file loads and
+extends), so the upstream settings keep being applied in full and this image
+only adds to them. **Overriding `OVERLEAF_CONFIG` replaces this file**: a
+deployment that sets it would lose the module registration above, without an
+error. Point it at a file that requires `settings.overlay.cjs` if you need your
+own.
+
 ## Notes
 
 - `.pug` files are precompiled to `.js` at image build time and take
@@ -96,7 +172,12 @@ docker rm tmp
 - Overleaf `6.x` restricts direct access to request input
   (`req.query`/`req.body`, `REQ_LOCKDOWN_MODE`). The OIDC flow reads request
   parameters only through `passport-oauth2`, which is patched for this in the
-  image; the added code does not access raw request input.
+  image; the added code does not access raw request input. The ported
+  track-changes routes do read `req.body` and `req.params` directly, the way the
+  core routes they were taken from do. `REQ_LOCKDOWN_MODE` is unset in this image
+  (its default is `off`), so this works; **`REQ_LOCKDOWN_MODE=throw` would break
+  those routes**, and they are the only part of the overlay that would need
+  `parseReq` schemas before that mode can be used.
 - The token exchange sends the client credentials in the request body
   (`client_secret_post`). Make sure the OIDC client is configured accordingly.
 - The redirect URI is resolved per request in `OidcCallbackUrl.mjs`:
@@ -155,3 +236,49 @@ docker rm tmp
   `verify(req, accessToken, refreshToken, { params, idTokenClaims }, profile, done)`
   and refuses the login when the token does not verify or when its `sub` differs
   from the one in the userinfo response.
+
+### Track changes
+
+- A module directory is **not** picked up by itself: `Modules.loadModulesImpl()`
+  walks `Settings.moduleImportSequence` and imports `modules/<name>/index.mjs`
+  for each entry. Nothing else in the image changes that sequence, which is why
+  the overlay ships a settings file for it - see above.
+- `modules/track-changes/index.mjs` flips a flag on a core module's export at
+  import time (`ProjectEditorHandler.trackChangesAvailable = true`). That is the
+  whole switch: the core then reports `features.trackChangesVisible: true` in the
+  project payload, and the review panel that is already part of the frontend
+  bundle becomes reachable. There is no equivalent flag to set from the settings
+  file.
+- The feature is **opt-in** (`OVERLEAF_ENABLE_TRACK_CHANGES=true`). The user
+  interface it switches on - the review panel, the track-changes toolbar and the
+  comment threads - ships in the CE frontend bundle, but whether it works with
+  the rest of a given deployment (the document-updater's range handling, the
+  chat service) can only be seen by using it. Turning it on is therefore a
+  decision, not a default.
+- The user interface is reached through the *core* frontend, not through
+  `Settings.overleafModuleImports` (the registry that pulls module frontends into
+  the webpack build). That is the reason this feature is portable and, for
+  example, the error assistant is not: its components are compiled into the
+  bundle and a runtime setting cannot add them.
+
+### Sandboxed compiles
+
+- The CE image is *wired* for sibling containers (its clsi start script adds
+  `www-data` to the group of `/var/run/docker.sock` when the socket is mounted)
+  but does not ship the runner: `services/clsi/config/settings.defaults.cjs`
+  exits with "Sandboxed compiles are only available with Overleaf Server Pro"
+  when `SANDBOXED_COMPILES=true` and the file is missing. The overlay adds the
+  file, so the feature becomes available; it also has to be *configured* on the
+  host, see `README.md`.
+- The seccomp profile is version dependent. `clsi-profile.json` is the one that
+  belongs to the clsi of this base image (the copy in
+  `ayaka-notes/texlive-full` is an older, smaller one: 171 instead of 205 syscall
+  groups). A profile that is too old makes `minted` fail with a permission error
+  that looks like a user or config problem.
+- `services/clsi/package.json` already depends on `dockerode`, `async` and
+  `lodash`, so the runner needs no new package - the same constraint as
+  everywhere else in this overlay (S2).
+- The image a project compiles in must be tagged `<year>.<something>`: the
+  runner reads the TeX Live year out of the tag to build the `PATH` inside the
+  compile container (`image.match(/:([0-9]+)\.[0-9]+/)`). `lvcs/sharelatex:6.3.0`
+  would be read as "TeX Live 6".

@@ -3,6 +3,11 @@
 # Latexmk products
 *.pdf
 
+# knitr products: the .tex and the concordance file are generated from the
+# .Rnw/.Rtex next to them (tests/knitr)
+*-concordance.tex
+tests/knitr/*.tex
+
 # TeX Files
 __latexindent_temp.tex
 _minted*
