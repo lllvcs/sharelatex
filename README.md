@@ -654,7 +654,15 @@ Documented in the [OIDC section](#oidc-single-sign-on) above:
 | `AI_IMAGE_MODEL` | – | Optional: a model on the same gateway for conversations that contain images. |
 | `AI_MAX_STEPS` | `20` | Optional: how many tool calls one user message may cause, across requests. |
 | `AI_PROXY_URL` | – | Optional: route the gateway calls through an HTTP proxy. |
-| `AI_TOKEN_QUOTA` | – | Optional: token budget per user and period; `AI_TOKEN_QUOTA_PERIOD` is `month` (default) or `day`. |
+| `AI_TOKEN_QUOTA` | `0` (no limit) | Optional: token budget per user and period. |
+| `AI_TOKEN_QUOTA_PERIOD` | `month` | Optional: the period the quota resets on, `month` (the 1st, UTC) or `week`. |
+| `WEB_SEARCH_PROVIDER` | `tavily` | Optional: the backend behind the assistant's *Web* tool. |
+| `TAVILY_API_KEY` | – | Optional: key for that backend, which without it the *Web* tool does not appear. `WEB_SEARCH_API_KEY` is accepted as an alternative name. |
+| `WEB_SEARCH_URL` | the provider's own | Optional: endpoint of a self-hosted, Tavily-compatible search backend. |
+| `WEB_SEARCH_MAX_RESULTS` | `5` | Optional: how many results the *Web* tool returns. |
+| `WEB_SEARCH_DEPTH` | `basic` | Optional: search depth passed to the backend. |
+| `DOCS_MCP_URL` | Overleaf's own docs MCP endpoint | Optional: what the assistant's documentation search queries, as an MCP URL. |
+| `EXTERNAL_AUTH` | empty | Optional, and only read by the admin panel: which external authentication methods to list on `/admin/user`, space separated (e.g. `oidc`). This image's own OIDC support does **not** need it - the panel just shows the methods you name. |
 | `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | The settings file of the container. It loads the one of the base image and extends it; **replacing it also removes the module registration of this image** - see [overlay/README.md](overlay/README.md). |
 
 ## Troubleshooting
@@ -717,27 +725,30 @@ docker build --build-arg OVERLEAF_REBUILD_FRONTEND=true -t lvcs/sharelatex .
 
 The step restores the devDependencies, runs webpack with
 [`overlay/services/web/config/settings.frontend.cjs`](overlay/services/web/config/settings.frontend.cjs),
-and prunes them again. It is **off by default**: it makes the build
-significantly longer, it needs the yarn cache or the network, and the generated
-bundle has to be regenerated whenever the base image moves. CI
-(`build-test.yml`) builds *with* it, so the path is tested even though the
-published image does not use it.
+and prunes them again. **Both** workflows that build an image pass
+`OVERLEAF_REBUILD_FRONTEND=true` - `build-test.yml` so the path is tested, and
+`docker-build.yml` because the published image has to contain the user interfaces;
+leaving the argument off produces an image whose features have their routes and no
+UI. Building by hand without the argument is still supported, and is what you get
+if you forget it, so the flag is worth checking first when a panel is missing.
 
 Measured on a real build rather than assumed: `yarn install` took 15 seconds from
-the image's own yarn cache, webpack 35 seconds, the rebuilt manifest has the same
-41 entrypoints as the base image's, and the module's component is in
-`public/js/pages/ide-*.js`. `DEVELOP_EXPERIMENT.MD` §3.2 has the details,
-including what it still does not prove (that the palette renders correctly in a
-browser).
+the image's own yarn cache, webpack 35 seconds (30 with the three ported features),
+and the rebuilt manifest has 43 entrypoints - the base image's 41 plus the admin
+panel's two pages. `DEVELOP_EXPERIMENT.MD` §3.2 has the details, including what it
+still does not prove (that the panels render correctly in a browser).
 
-What is in the rebuilt bundle today is the **symbol palette** - the smallest
-module whose entire effect is proof that the mechanism works. Adding another is
-the same three edits: copy the module into `overlay/services/web/modules/`, add
-its registry key to `settings.frontend.cjs`, and (for its backend routes) add it
-to `moduleImportSequence`. `DEVELOP_EXPERIMENT.MD` §3.2 records the details,
-including the two traps: webpack without `OVERLEAF_CONFIG` produces an equally
-empty bundle **with a green build**, and the AI assistant additionally needs a
-one-line import substitution plus an AI gateway to point at.
+What is in the rebuilt bundle today is the **symbol palette**, the **reference
+picker**, the **AI assistant** with the **error assistant**, and the **admin
+panel**'s two pages. Adding another is the same three edits: copy the module into
+`overlay/services/web/modules/`, add its registry key to `settings.frontend.cjs`
+(unless its UI is a page entrypoint, which webpack collects on its own), and - for
+its backend routes - add it to `moduleImportSequence`.
+`DEVELOP_EXPERIMENT.MD` §3.2 and §3.3 record the details, including the traps:
+webpack without `OVERLEAF_CONFIG` produces an equally empty bundle **with a green
+build**, a module that shares a route with one in the base image has to be
+inserted rather than appended, and the AI modules needed one import substituted
+plus a gateway to point at.
 
 ## Building the image
 

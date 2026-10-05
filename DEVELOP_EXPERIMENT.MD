@@ -251,8 +251,12 @@ verification checks the *output*, not the command:
   survives being copied to `/overleaf/services/web`), and that the string the
   image check greps for is still in the component.
 - `.github/workflows/build-test.yml` builds **with** the argument, so CI is what
-  proves the whole path. `docker-build.yml` does not, so the published image is
-  unchanged until this is deliberately switched on.
+  proves the whole path - and so does `docker-build.yml`, because the user
+  interfaces a module contributes only exist in a bundle that was rebuilt. Leaving
+  the argument off produces an image whose features have their routes and no UI,
+  which is a failure mode that looks like a broken frontend rather than a missing
+  build argument, so both workflows pass it and `tests/verify-overlay.sh` checks
+  the components are in the bundle afterwards.
 
 **What running it actually did**, measured against the real image on 2026-10-05
 (28 cores, the base image's own yarn cache, no network for the install):

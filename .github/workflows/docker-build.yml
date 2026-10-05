@@ -110,6 +110,14 @@ jobs:
           platforms: ${{ inputs.platforms || 'linux/amd64' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The frontend has to be rebuilt, or the features whose user interface
+          # a module contributes are missing from the published image: the symbol
+          # palette, the reference picker, the AI assistant and the admin panel
+          # would have their routes and no UI. See DEVELOP_EXPERIMENT.MD, section
+          # "Rebuilding the frontend", and tests/verify-overlay.sh, which checks
+          # the components are in the bundle after a build with this flag.
+          build-args: |
+            OVERLEAF_REBUILD_FRONTEND=true
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
