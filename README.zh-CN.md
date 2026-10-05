@@ -439,9 +439,14 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
   各选一个字体族的文档，因此只要有字体族缺失，CI 就会失败。
 - Google 字体取自发行版，而不是在构建时从 `google/fonts` 仓库下载（[texlive-full](https://github.com/ayaka-notes/texlive-full)
   就是那样做的）：发行版打包的集合可复现，在基础镜像可能基于的两个 Ubuntu 发行版上
-  都存在，而且每个软件包都针对这两者核对过。`fonts-ubuntu` 被**刻意**排除在外——
-  安装它可能改变未指定字体的文档的渲染结果，而构建过程会打印 `serif`、`sans-serif`
-  与 `monospace` 实际解析成哪个字体，好让这种变化能被看见。
+  都存在，而且每个软件包都针对这两者核对过。`fonts-ubuntu` 被**刻意**排除在外，
+  因为它可能直接顶掉 `sans-serif` 这个别名。
+  一条实测得到的注意点：这套字体集合会把 `serif` 与 `sans-serif` 的解析结果从 Noto
+  的 Regular 字面挪到 SemiCondensed 字面，而这一点无法从 fontconfig 一侧钉住（每个
+  Noto Serif 字面都声明同一个字体族名，fontconfig 在它们之间做选择时会忽略请求的
+  宽度）。普通文档不受影响——它的默认字体来自格式本身，而不是 fontconfig——所以这
+  只会体现在指名了*通用*字体族的文档以及非 TeX 工具里。构建过程会打印这三个别名解析
+  成什么（`DEVELOP_EXPERIMENT.MD` §5.3）。
   Overleaf 列出而**没有**发行版打包的那些字体族——其中包括 *Merriweather*、*Raleway*、
   *Oswald*、*Open Sans Condensed*、*Source Sans Pro* 与 *PT Sans*——因此仍然缺失；
   像内置中文字体集合那样把它们内置进 [`fonts/`](fonts/README.md)，就能在不做构建期
@@ -615,13 +620,25 @@ node --test tests/oidc-*.test.mjs tests/overlay-settings.test.mjs \
 新版本应用悄悄混在一起。此时请按照
 [overlay/README.md](overlay/README.md) 中的步骤重新适配 overlay。
 
-overlay 还在三处依赖 CE 镜像的*形态*，而这些地方可能因基础镜像更新而变化；构建会
+overlay 还在若干处依赖 CE 镜像的*形态*，而这些地方可能因基础镜像更新而变化；构建会
 检查它们，失败时打印一条说明该做什么的消息：
 
 - 校验和受检查的那两个文件（`AuthenticationController.mjs`、`router.mjs`）；
 - `services/clsi/app/js/CommandRunner.js` 必须导入 Docker runner（overlay 以某个
   release 可能使用的两个名字提供了它）；
 - `Dockerfile` 追加内容的那些 TeX Live 配置文件，以及编译工具链所调用的程序。
+
+有两项依赖是基础镜像更新**无法**解决的，因为它们在基础镜像之外：
+
+- **CTAN。** 只要仓库里的 `tlmgr` 比已安装的新，`tlmgr install` 就会拒绝工作，而基础
+  镜像投入使用的时候往往已经过了几个月。因此 `Dockerfile` 里每一次安装之前都先执行
+  `tlmgr update --self`，这正是这个镜像得以构建的前提；没有它，镜像只有在基础镜像
+  构建当天才构建得出来（`DEVELOP_EXPERIMENT.MD` §5.4）。
+- **前端。** 如果镜像用 `--build-arg OVERLEAF_REBUILD_FRONTEND=true` 构建，那么
+  bundle 是从基础镜像的前端源码编译出来的，因此基础镜像一动它就得重新生成。重建所
+  读取的注册表（`overlay/services/web/config/settings.frontend.cjs`）指向本仓库模块
+  目录里的路径，一旦其中某个路径不再能解析，`tests/frontend-rebuild.test.mjs`
+  就会失败。
 
 ## 致谢
 

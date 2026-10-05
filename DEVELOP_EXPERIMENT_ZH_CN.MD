@@ -188,6 +188,20 @@ overlay 的假设里有五条是拿**已发布镜像**（而不是源码树）�
 - `.github/workflows/build-test.yml` 是**带这个参数**构建的，所以 CI 才是证明整条路径
   可用的地方。`docker-build.yml` 不带，因此在有人刻意打开之前，发布的镜像保持不变。
 
+**它跑起来究竟做了什么**，2026-10-05 对着真实镜像实测（28 核、用基础镜像自带的 yarn
+缓存、安装过程不需要联网）：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `yarn install --immutable` | 15 秒，全部来自 `/overleaf/.yarn/cache`——缓存确实留住了被裁掉的 devDependencies |
+| `yarn run webpack:production` | 35 秒，464 个 JS 资源，写出 `manifest.json` |
+| 设置文件 | 先 `Using settings from /overleaf/services/web/config/settings.frontend.cjs`，紧接着 `Detected change in overleafModuleImports, purging babel cache!`——注册表确实是在该读的地方被读到的 |
+| 打包产物 | 41 个入口，与基础镜像 manifest 里的完全相同，**外加**在 `public/js/pages/ide-*.js` 里找到了该模块的组件 |
+| `yarn workspaces focus --all --production` | 再次裁掉 devDependencies；跑起来的镜像不变 |
+
+所以重建确实可行，这套机制不再是假设。它*没有*回答的是：调色板在浏览器里渲染是否
+正确——那需要跑起一个实例，而不是做一次构建。
+
 **它的代价**，以及为什么不做默认：镜像构建多出一次 `yarn install` 和一次生产模式的
 webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以基础镜像一动就必须重新生成；
 而且一个 UI 被重建进去的模块，其后端仍然必须列在 `moduleImportSequence` 里，它的路由
@@ -296,6 +310,96 @@ Google Noto font, as included in Ubuntu 22.04」*——这正是本仓库采取�
 因此只要有字体族缺失或被改名，CI 就会失败，并把名字留在日志里。这正是它与最初那个
 「加几个 Google 字体」的计划的区别：这份清单现在成了仓库可以据以回归测试的东西。
 
+那份示例教给我们的三件事，现在都写在文件里了：
+
+- **只要声明了字体族，就足以测试它。** `\newfontfamily{X}` 是在**声明时**就通过
+  fontconfig 解析名字的，而不是第一次使用时——所以一个不存在的字体族会让构建失败，
+  哪怕从没在它里面排过任何字。这一点两个方向都实测过，而它之所以重要，是因为那个
+  显而易见的替代方案（每个字体族排一句示例文字）行不通：一个完全没有拉丁字符的字体
+  会让 XeTeX 以 "there are no glyphs in the subset" 直接失败。
+- **`\newfontfamily\testC059{C059}` 并不像看上去那样工作。** 在 TeX 里数字不是字母，
+  所以那条语句声明的是 `\testC`，并把孤零零的 `0` 当作字体名交给 fontspec；报错是
+  `The font "0" cannot be found`，对真正的错误只字不提。这些字体族里有两个叫 `C059`
+  和 `Z003`，所以它们的命令名是完整拼出来的。
+- **通用字体族钉不住，而这套集合确实会挪动它们。** 在镜像以前那套字体下，`serif` 与
+  `sans-serif` 解析到 Noto 的 Regular 字面；换成完整集合后，它们解析到 SemiCondensed
+  字面。`<alias><prefer>`、在前面插一个字体族的 `<match>`、以及指定一个普通 `width`
+  ——各自都试过带与不带 `binding="strong"`——实测全都没有效果，因为每个 Noto Serif
+  字面都声明同一个字体族名，而 fontconfig 在它们之间选择时会忽略请求的宽度。唯一
+  有效的做法是把 condensed 字面直接拒绝掉，代价是它们变得无法选择。普通 LaTeX 文档
+  两种情况下都不受影响：它的默认字体来自格式本身（Latin Modern），不是来自
+  fontconfig，所以这只会体现在指名了*通用*字体族的文档以及非 TeX 工具里。
+  `fonts-ubuntu` 依然不在包列表里，因为它可能直接拿下 `sans-serif` 这个别名。
+
+### 5.4 这个镜像以前只在基础镜像构建当天才构建得出来
+
+本轮第一次 CI 运行失败了，而失败与它在测的东西毫无关系：
+
+```
+#16 [stage-0 7/36] RUN tlmgr install latexmk texcount synctex etoolbox xetex
+tlmgr itself needs to be updated.
+...
+tlmgr: Terminating; please see warning above!
+```
+
+只要 CTAN 仓库里的 `texlive.infra` 比已安装的新，`tlmgr` 就会拒绝*安装*任何东西。基础
+镜像自带的是 7 月的 `tlmgr revision 79639`；到 10 月仓库已经是 `80502`，而 CTAN 每天
+都会发布这个包的好几个修订版。所以**这个镜像根本没法从零构建**——那次 CI 之所以能走到
+那一步，只是因为一直到 `tlmgr install scheme-full` 为止的各层都是几个月前那次构建留下
+的缓存命中。冷构建会在 `scheme-full` 就失败，而只读 Dockerfile 的人没有任何办法知道
+这一点。
+
+修法*不是*什么：`update-tlmgr-latest.sh`，Dockerfile 里本来就在跑它。不带参数时它把
+`texlive.infra` 留在原地；而带上 `-- --upgrade`——也就是 Overleaf 自己
+`Dockerfile-base` 用的那种形式——它在这里会拒绝：*"have TL 2026, new version also
+2026; using --upgrade doesn't make sense; terminating"*。修法是：`tlmgr update
+--self`，也就是报错信息自己要求的那条命令，而且在无事可做时它是个空操作。动
+Dockerfile 之前，两种做法都在容器里实测过。
+
+因为仓库在一次构建*期间*也可能继续前进（光 scheme-full 就要好几分钟），Dockerfile 里
+每一次 `tlmgr install` 之前都加了 `tlmgr update --self`，而不是只加在第一次。
+
+由此得到的一般教训，也是这件事写进记录而不是提交信息的原因：**一个依赖会移动的第三方
+的构建，它的第一步必须先把那个第三方更新到最新**，否则这个依赖会一直隐形，直到它崩掉
+的那一天。
+
+### 5.5 第一次真正跑测试发现了什么
+
+本轮开始时，这个镜像从来没有在冷缓存下构建过，所以 `tests/verify-overlay.sh` 与
+`tests/compile.sh` 都从未运行过——上一次绿色的 CI 已经是几个月前的事，而且早于这里
+大部分测试。在本地把它构建出来并跑完两者，翻出了九个缺陷，而其中没有一个能靠阅读
+发现。把它们列在这里，是因为模式本身就是重点：九个里有七个出在*测试*里，而那七个
+要么是「因为错误的原因而通过」，要么会在一个正确的镜像上失败。
+
+| 哪里错了 | 怎么暴露出来 | 为什么一直没被发现 |
+| --- | --- | --- |
+| `tlmgr install` 拒绝运行（见上文 §5.4） | 构建在第一次 `tlmgr install` 处停住 | 它上面的各层来自几个月前构建的缓存 |
+| `tests/compile.sh` 用 `-r` 把共享 rc 交给 latexmk，于是示例自己的 rc 永远赢不了 | 每个要求 XeLaTeX 的示例都在用 LuaLaTeX 编译 | PDF 里没有任何东西会说明它是哪个引擎生成的 |
+| knitr 示例被递了 `main.Rnw`，而 clsi 要的是 `main.tex` | latexmk 把引擎作用在 R 源码上 | 这个示例从未被编译过 |
+| latexmk 需要 `-jobname=output`（clsi 也会传），否则它在一次无害的首轮之后以 12 退出 | `compile.sh` 在 knitr 示例上失败，尽管 PDF 是正确的 | 同上 |
+| 内置的楷体字体叫 `Kaiti.ttf`，而不是 `KaiTi.ttf`，所以那个大小写敏感的复制从未生成 `simkai.ttf` | `tests/fonts-zhmetrics` 以 `cannot open TrueType font file` 失败 | 同上 |
+| `verify-overlay.sh` 用 `require()` 读设置，然后断言的是*模块*在加载时才施加的设置 | 在一个正确的镜像上报 `imageRoot is undefined` | 它从未运行过 |
+| 它还在功能关闭的状态下 import 了 clsi 的 `DockerRunner`，而那时 `clsi.docker` 并不存在 | `Cannot read properties of undefined (reading 'maxContainerAge')` | 同上 |
+| 它拿 latexmk rc 去比对与文件里空格不同的字符串 | 在一个正确的文件上把 `add_cus_dep( 'glo'...` 报成「缺失」 | 同上 |
+| `compile.sh` 在第二次运行时编译了 knitr 生成的 `main-concordance.tex` | 第一次运行留下了它，于是第二次失败 | 只有跑第二遍才会显形 |
+
+有两个行为值得作为*产品本身的性质*记下来——它们也是以同样方式发现的，如今写在用户会去
+查的地方：
+
+- **`\tikzexternalize` 在 Overleaf 的编译调用方式下不可能工作。** pgfplots 通过再跑一次
+  编译来外部化图形，而那次编译的包装是
+  `\def\tikzexternalrealjob{\jobname}\input{\jobname}`；clsi 却用 `-jobname=output`
+  调 latexmk，而源文件仍用自己的名字——于是包装去找 `output.tex`，那个文件不存在。图形
+  失败（它自己的日志里是 `! Emergency stop`，`tikzext/plot.log`），而外层文档仍然产出
+  PDF，这正是它难以察觉的原因。绕过办法是在 `external/system call` 里直接写出源文件名，
+  而不是依赖 `\texsource`。原本为测这件事写的那个示例被缩减成它真正能证明的东西——
+  shell-escape 往子目录里写文件——而不是去断言产品并不具备的行为。
+- **`\write18` 在 LuaLaTeX 下是个空操作。** XeLaTeX 与 pdfLaTeX 会执行它，LuaLaTeX 不会
+  （TeX Live 的 LuaTeX 期望通过 `\directlua` 调用 `os.execute`），这也是 `minted` 与
+  `svg` 在 LuaLaTeX 下能用的原因——它们会探测引擎并切换做法。一份手写 `\write18` 的文档
+  在三种引擎里的两种下能用，这一点在怪罪镜像之前值得知道：`texmf.cnf` 里是
+  `shell_escape = t`，失败的是引擎本身。
+
 ---
 
 ## 6. 首个可用版本之后修掉的安全问题
@@ -381,7 +485,7 @@ tests/compile.sh                                       # 最小可编译示例�
 - 多提供方特性（组映射、`preferred_username`）必须在依赖约束内设计。
 - 端到端验证需要真实实例与真实提供方，不在 CI 范围内。修订功能与真正的沙箱编译同样如此。
 - Google Fonts 现在已通过发行版的软件包覆盖（§5.3），不再依赖构建期下载；仍未覆盖的，是那些没有发行版打包的字体族（`Merriweather`、`Raleway`、`Oswald`、`Source Sans Pro`、`PT Sans` 等）。内置一个精选子集就能补上它，而且不需要构建期下载——这也是 `texlive-full` 的做法相对本仓库唯一还占优的地方。
-- 如果哪天真的加了前端构建步骤，AI 助手只要替换一处 import 就能触达（§3）；在那之前不行。
+- 前端重建已经存在并且可用（§3.2），目前承载一个模块：`symbol-palette`。它接下来让什么变得可触达、以及每一个还缺什么，都记在那一节里：AI 助手需要替换一行 import，外加一个 AI 网关；管理面板则与 `user-activate` 在 `/admin/user` 上相撞。加其中任何一个都是三处改动加一次重建。
 - `MAX_UPLOAD_SIZE` 与 linked-URL 代理之所以只是设置，是因为它们被 CE 核心代码读取；它们所属的两个功能（大文件上传、linked URL）在镜像里其实都是完整的。
 - 被否决的候选里唯一值得回过头做的是 `learn`（§3）：它的后端原样就能用，唯一的问题是它会在服务器开始监听**之前**缓存上游整个 wiki。改成后台抓取、或首次请求时抓取，就会比它来自的那个分支更好。
 - 注册目前仍是全开或全关（`OVERLEAF_ENABLE_REGISTRATION`）。该分支在 `login-register` 模块里实现「限定单一邮箱域名」的做法，在本 overlay 里可以做成一个小模块：守住 `POST /register`，不通过就放行给核心处理器——只新增文件、不替换上游文件，而 `overlay-modules.cjs` 已经是打开它的地方。

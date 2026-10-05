@@ -21,8 +21,16 @@ COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-600}
 # which has no \documentclass and cannot be compiled). Both are in .gitignore for
 # the same reason. Without the exclusions the first run leaves them behind and the
 # second run fails on the concordance file.
+#
+# `tests/*/subdir/` is the same problem from the other side: the shell-escape
+# example *writes* `subdir/content.tex` with \write18 and \inputs it, so one run
+# leaves behind a 26-byte file with no \documentclass - and it is compiled without
+# the example's own latexmkrc, since that file is not in the subdirectory. It is
+# in .gitignore as well. The exclusions are the rule "compile what the repository
+# tracks", which is also what makes this script safe to run twice.
 find /tests \( -name "*.tex" -o -name "*.Rnw" -o -name "*.Rtex" \) \
-     ! -name "*-concordance.tex" ! -path "/tests/knitr/*.tex" -print0 | while IFS= read -r -d "" file; do
+     ! -name "*-concordance.tex" ! -path "/tests/knitr/*.tex" \
+     ! -path "/tests/*/subdir/*" -print0 | while IFS= read -r -d "" file; do
   cd "$(dirname "$file")" || exit 1
   echo "compiling inside $(pwd)"
   # The two rc files have to be concatenated, which is not obvious: latexmk
