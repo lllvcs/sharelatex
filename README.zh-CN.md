@@ -570,7 +570,15 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 | `AI_IMAGE_MODEL` | – | 可选：同一网关上用于包含图片的对话的模型。 |
 | `AI_MAX_STEPS` | `20` | 可选：一条用户消息最多可以触发多少次工具调用（跨请求累计）。 |
 | `AI_PROXY_URL` | – | 可选：让网关调用走一个 HTTP 代理。 |
-| `AI_TOKEN_QUOTA` | – | 可选：每个用户在每个周期内的 token 预算；`AI_TOKEN_QUOTA_PERIOD` 为 `month`（默认）或 `day`。 |
+| `AI_TOKEN_QUOTA` | `0`（不限制） | 可选：每个用户在每个周期内的 token 预算。 |
+| `AI_TOKEN_QUOTA_PERIOD` | `month` | 可选：配额重置的周期，`month`（每月 1 日，UTC）或 `week`。 |
+| `WEB_SEARCH_PROVIDER` | `tavily` | 可选：助手 *Web* 工具背后的后端。 |
+| `TAVILY_API_KEY` | – | 可选：该后端的密钥；没有它 *Web* 工具不会出现。也接受 `WEB_SEARCH_API_KEY` 这个名字。 |
+| `WEB_SEARCH_URL` | 该后端自己的地址 | 可选：自建的、与 Tavily 兼容的搜索后端端点。 |
+| `WEB_SEARCH_MAX_RESULTS` | `5` | 可选：*Web* 工具返回多少条结果。 |
+| `WEB_SEARCH_DEPTH` | `basic` | 可选：传给后端的搜索深度。 |
+| `DOCS_MCP_URL` | Overleaf 自己的文档 MCP 端点 | 可选：助手的文档检索查询的是哪个地址，写成 MCP URL。 |
+| `EXTERNAL_AUTH` | 空 | 可选，且只有管理面板会读：`/admin/user` 上要列出哪些外部认证方式，以空格分隔（例如 `oidc`）。本镜像自己的 OIDC 支持**不需要**它——面板只是把你写出的方式列出来。 |
 | `OVERLEAF_CONFIG` | `/etc/overleaf/settings.overlay.cjs` | 容器的设置文件。它会加载并扩展基础镜像的那一份；**替换它同时也会移除本镜像的模块注册**——见 [overlay/README.md](overlay/README.md)。 |
 
 ## 常见疑问
@@ -624,17 +632,25 @@ docker build --build-arg OVERLEAF_REBUILD_FRONTEND=true -t lvcs/sharelatex .
 
 这一步会恢复 devDependencies，用
 [`overlay/services/web/config/settings.frontend.cjs`](overlay/services/web/config/settings.frontend.cjs)
-跑一次 webpack，然后再把它们裁掉。它**默认关闭**：这会让构建时间显著变长，需要 yarn
-缓存或网络，而且只要基础镜像一升级，生成出来的打包产物就必须重新生成。CI
-（`build-test.yml`）是**带这个参数**构建的，因此即使发布的镜像并不使用这条路径，它
-依然被测试覆盖。
+跑一次 webpack，然后再把它们裁掉。**两个会构建镜像的 workflow 都带**
+`OVERLEAF_REBUILD_FRONTEND=true`——`build-test.yml` 是为了让这条路径被测到，
+`docker-build.yml` 则是因为发布出去的镜像必须包含这些用户界面；不带这个参数构建出来的
+镜像，功能的路由都在、界面却不在。手动构建时仍然可以不带它，而忘记带的结果也正是如此，
+所以当某个面板不见了时，这个开关值得第一个检查。
 
-目前重建产物里放的是**符号面板**——它是「整个效果本身就能证明机制可用」的最小模块。
-再添加一个模块是同样的三处改动：把模块复制进 `overlay/services/web/modules/`，把它
-的注册表键加进 `settings.frontend.cjs`，并且（如果它有后端路由）把模块名加进
-`moduleImportSequence`。`DEVELOP_EXPERIMENT.MD` 的 §3.2 记录了细节，包括两个坑：
-不带 `OVERLEAF_CONFIG` 跑 webpack 会产出**同样空**的打包产物而**构建仍然是绿的**；
-AI 助手还额外需要替换一处 import，并接上一个 AI 网关才有意义。
+这些数字是实测而不是推测：`yarn install` 用镜像自带的 yarn 缓存花了 15 秒，webpack
+35 秒（带上移植来的三个功能后是 30 秒），重建后的 manifest 有 43 个入口——基础镜像的
+41 个，加上管理面板的两个页面。细节见 `DEVELOP_EXPERIMENT.MD` 的 §3.2，其中也包括
+它仍然**没有**证明的事（这些面板在浏览器里是否正常渲染）。
+
+目前重建产物里有**符号面板**、**引用选择器**、**AI 助手**与**错误助手**，以及**管理
+面板**的两个页面。再添加一个模块是同样的三处改动：把模块复制进
+`overlay/services/web/modules/`，把它的注册表键加进 `settings.frontend.cjs`（除非它的
+界面是页面入口，那种 webpack 会自己收集），并且（如果它有后端路由）把模块名加进
+`moduleImportSequence`。`DEVELOP_EXPERIMENT.MD` 的 §3.2 与 §3.3 记录了细节，包括那
+几个坑：不带 `OVERLEAF_CONFIG` 跑 webpack 会产出**同样空**的打包产物而**构建仍然是绿
+的**；与基础镜像里某个模块共用路由的模块必须**插入**而不是追加；AI 那两个模块还需要
+替换一处 import，并接上一个 AI 网关才有意义。
 
 ## 构建镜像
 
