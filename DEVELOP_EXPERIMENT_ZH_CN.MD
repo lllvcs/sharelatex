@@ -124,7 +124,7 @@ Overleaf 把后端以普通 ESM 源码形式放在镜像里（`app/src/**/*.mjs`
   **HTTP 500**，这比功能缺席更糟。
 
   重新构建是可行的，上游就是这么做的：
-  `OVERLEAF_CONFIG=<一份把注册表填好的设置文件> yarn run
+  `OVERLEAF_CONFIG=<a settings file with a filled registry> yarn run
   webpack:production`，前提是先用 `yarn install` 从缓存里把 devDependencies 恢复回来。
   代价是：镜像构建时间大幅拉长、打包产物每次上游升级都要重新生成，而且——专就 AI 模块
   而言——还要替换一处 import，再加一个要指向的 AI 网关。它也很容易悄无声息地做错：
@@ -281,7 +281,7 @@ webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以�
 
 **而那个分支填了 30 个键，本 overlay 填 11 个。** 这 19 个差额就是"下一次移植需要什么"的具体答案：`referenceLinkingWidgets`、`referenceSearchSetting` 与四个 `tprFileView*` 属于参考文献集成（Zotero、Mendeley）；`importProjectFromGithubMenu`、`importProjectFromGithubModalWrapper`、`editorLeftMenuSync`、`editorLeftMenuManageTemplate` 属于 GitHub；`pythonRunner`、`fullProjectSearchPanel`、`editorSidebarComponents`、`fileTreeToolbarComponents`、`sourceEditorToolbar*`、`menubarExtraComponents`、`insertMenuSections`、`sectionTitleGenerators`、`editorFloatingMenuActions`、`langFeedbackLinkingWidgets`、`contactUsModal` 属于其余部分。它们没有一个属于已经移植的三个功能：引用选择器需要的是 `referenceIndices`、`mainEditorLayoutModals` 与 `autoCompleteExtensions`，而 overlay 三个都填了。
 
-**审计的结论。** 一类缺陷、六种撞上的方式、**两例——就是被报告并修掉的那两例**。其余全部对得上：overlay 填的注册表键都有消费者，移植模块读的设置都有来源（模块自己、设置文件，或路由局部变量），移植组件读的元数据由 core 的视图或 overlay 自己的视图写入，前端取的两个 URL 都有服务，没有任何 `@modules/` 指向本 overlay 不提供的模块，每一个注册表路径都落到文件上。这一类现在两侧都有机械检查——仓库侧是 `tests/overlay-reachability.test.mjs`，镜像侧是 `tests/verify-overlay.sh` 里的功能名比对——而镜像侧那一道已经验证过：把 bug 放回去，它会失败。
+**审计的结论。** 一类缺陷、七种撞上的方式，共**三例**：前六个方向找到并已修掉的两例（`symbol-palette`、`instance-features`），以及引用选择器缺失的那个提示——它是一次真实部署在之后报告的，而正是那次报告促成了第七个方向，因为"一个键被填了、但条目数少于功能所需"这种情况能通过其余六项全部检查。其余全部对得上：overlay 填的注册表键都有消费者、且分支为这些键注册的条目都在，移植模块读的设置都有来源（模块自己、设置文件，或路由局部变量），移植组件读的元数据由 core 的视图或 overlay 自己的视图写入，前端取的两个 URL 都有服务，没有任何 `@modules/` 指向本 overlay 不提供的模块，每一个注册表路径都落到文件上。这一类现在两侧都有机械检查——仓库侧是 `tests/overlay-reachability.test.mjs`，镜像侧是 `tests/verify-overlay.sh` 里的功能名比对——而镜像侧那一道已经验证过：把 bug 放回去，它会失败。
 
 **这次审计不覆盖什么。** 一个名字能解析，仍可能是错的名字：如果某个注册表键指向一个存在但并非本意的组件，或者 core 在某个本镜像永远走不到的分支里做 `hasFeature` 判断，这里没有任何东西会发现。它针对的是真正发生过的那种失败——已编译、正确、却不可达——而 §9 要求的浏览器过一遍，仍然是覆盖其余部分的唯一手段。
 
@@ -557,7 +557,7 @@ AI 助手、管理面板与引用选择器都是在前端重建被证明可行�
 4. **一个解析不了的 import 会杀掉整个 web 服务**，因为模块列表是在启动时顺序 import 的。
 5. **模块清单同时就是功能开关，而这一点很容易被漏掉。** 对这些模块而言，`Features.hasFeature(name)` **就是** `Settings.moduleImportSequence.includes(name)`，而 core 前端据此门控界面——于是一个模块可以已经编进 bundle、代码完全正确，却永远不出现，只因为它的名字不在清单里。第一份真实 bug 报告的两半都出自这里：`symbol-palette` 的 `index.mjs` 什么都不注册，看起来像纯前端模块，于是没被放进序列，而项目页随后发的是 `ol-symbolPaletteAvailable: false`，编辑器因此从不渲染符号面板按钮；`instance-features` 唯一的职责是提供 `GET /system/features` 路由，被当作"纯依赖"漏掉了，于是助手的客户端 hook 拿到 404、回落到它自己的全禁用默认值——表现为一个置灰的面板，而不是一个缺失的面板。
    规则是：**只要有任何东西按名字来找这个模块，它就该进序列**——无论来找它的是注册表键、路由，还是一个 `hasFeature` 判断。只看 `index.mjs` 就下结论，正是这两处被漏掉的原因。
-   这两处都是**部署**发现的，不是测试发现的，所以随后按六个方向把整个 overlay 审计了一遍；§3.4 记录了查了什么、没有发现第三例，以及**第一轮的全部十二个发现都是检查工具自己的错**。会报缺陷的检查本身也得被检查。现在有两道窄口径的守卫：`tests/verify-overlay.sh`（镜像里，core 的 `hasFeature` 名字对序列）与 `tests/overlay-reachability.test.mjs`（仓库侧那一半），并且它做过反向验证：把 `OVERLEAF_ENABLE_SYMBOL_PALETTE` 关掉时，它报出的正是 `unreachable: ["symbol-palette"]`。
+   这两处都是**部署**发现的，不是测试发现的，所以随后按七个方向把整个 overlay 审计了一遍；§3.4 记录了查了什么、前六个方向没有发现第三例、第七个方向是在引用选择器缺提示那次报告之后才补上的，以及**第一轮的全部十二个发现都是检查工具自己的错**。会报缺陷的检查本身也得被检查。现在有两道窄口径的守卫：`tests/verify-overlay.sh`（镜像里，core 的 `hasFeature` 名字对序列）与 `tests/overlay-reachability.test.mjs`（仓库侧那一半），并且它做过反向验证：把 `OVERLEAF_ENABLE_SYMBOL_PALETTE` 关掉时，它报出的正是 `unreachable: ["symbol-palette"]`。
 6. **`OVERLEAF_CONFIG` 现在也是契约的一部分。** 它指向本镜像的设置文件；覆盖它的部署会悄无声息地丢掉模块注册，唯一的症状就是某个功能不见了。
 7. **提供方白名单不是代码。** 多主机部署需要在提供方登记所有回调地址（`OVERLEAF_OIDC_CALLBACK_URLS`），代码层面无法替代。
 8. **沙箱编译的部署那一半也不是代码**，而 toolkit 把它的那一半门控在 `SERVER_PRO` 上。

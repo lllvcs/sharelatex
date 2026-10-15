@@ -392,9 +392,14 @@ everything else. None of them belongs to the three features that were ported:
 the reference picker needs `referenceIndices`, `mainEditorLayoutModals` and
 `autoCompleteExtensions`, and the overlay fills all three.
 
-**What the audit concludes.** One class of defect, six ways to hit it, **two
-instances - the two that were reported and fixed**. Everything else resolves: the
-registry keys the overlay fills all have consumers, the settings the ported modules
+**What the audit concludes.** One class of defect, seven ways to hit it, and
+**three instances**: the two that the first six directions found and that were
+fixed (`symbol-palette`, `instance-features`), and the reference picker's missing
+hint, which a deployment reported afterwards - that report is what added the
+seventh direction, since a key that is filled with *fewer entries than the feature
+needs* passes all six of the others. Everything
+else resolves: the registry keys the overlay fills all have consumers and all the
+entries the fork registers, the settings the ported modules
 read are all set (by the modules themselves, by the settings file, or as route
 locals), the metadata the ported components read is set by the core's views or by
 the overlay's own, the two URLs the frontends fetch are served, no `@modules/`
@@ -849,8 +854,10 @@ reference picker's modal opens. All three need a running instance.
    name, whether that is a registry key, a route, or a `hasFeature` check. Deciding
    by reading `index.mjs` alone is how both were missed.
    Both were found by a deployment rather than by a test, so the whole overlay was
-   then audited for the same mistake in seven directions; §3.4 records what was
-   checked, that it found no third instance, and that **all twelve of the first
+   then audited for the same mistake - six directions at first, and a seventh once
+   a later report showed that a registry key filled with *fewer entries than the
+   feature needs* passes all six. §3.4 records what was
+   checked, that the first six found no third instance, and that **all twelve of the first
    pass's findings were the checker's own fault**. A check that reports a defect has
    to be checked too. The narrow guard now lives in `tests/verify-overlay.sh` (the
    core's `hasFeature` names against the sequence) and `tests/overlay-reachability.test.mjs`

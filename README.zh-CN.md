@@ -103,7 +103,7 @@ openssl rand -base64 32
 ```
 
 - **Overleaf Toolkit**：在 `config/variables.env` 中添加
-  `OVERLEAF_INVITE_TOKEN_SECRET=<值>`，然后执行 `bin/up` 重启。
+  `OVERLEAF_INVITE_TOKEN_SECRET=<value>`，然后执行 `bin/up` 重启。
 - **Docker Compose**：添加到 `sharelatex` 服务的环境变量中，然后重启容器。
 
 ## OIDC 单点登录
@@ -214,7 +214,7 @@ ECDSA，`none` 和共享密钥类一律拒绝。token 的 `sub` 还必须与 use
 ### 回调地址（多域名与反向代理）
 
 **默认无需任何配置**：回调地址由发起登录的那次请求推导而来，即
-`<协议>://<用户正在访问的域名>/login/oidc/callback`。因此同一个站点即使有多个
+`<scheme>://<the host the user is browsing>/login/oidc/callback`。因此同一个站点即使有多个
 域名也能直接工作——只需在提供方为每个域名注册一个回调地址，而回调到达时也只会
 与「发起登录时所用的域名」匹配。
 
@@ -250,7 +250,7 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
 
 ### 提供方配置
 
-- 回调地址（Redirect URI）：`https://<你的 Overleaf 域名>/login/oidc/callback`
+- 回调地址（Redirect URI）：`https://<your-overleaf-domain>/login/oidc/callback`
   ——你使用几个域名，就注册几个（或直接使用 `OVERLEAF_OIDC_CALLBACK_URLS` 中的
   值）。
 - 客户端认证方式：令牌请求把 `client_id` 与 `client_secret` 放在请求体中
