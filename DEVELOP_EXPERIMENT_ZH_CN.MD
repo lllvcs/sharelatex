@@ -263,12 +263,13 @@ webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以�
 
 ### 3.4 针对同一类错误审计整个 overlay
 
-两个移植来的功能已经发布、已经编译、通过了每一道检查——却在真实部署里不出现（§8.5）。那是一**类**错误，不是一次事故，所以按"一个名字必须对上的六个方向"对整个 overlay 做了抽取式审计。后三个方向是在前三个都干净之后才加的，因为"这一类里剩下的"不是三道检查能确立的事情：
+两个移植来的功能已经发布、已经编译、通过了每一道检查——却在真实部署里不出现（§8.5）。那是一**类**错误，不是一次事故，所以按"一个名字必须对上的七个方向"对整个 overlay 做了抽取式审计——每一个方向都是在前面的都干净之后才加的，因为"这一类里剩下的"不是几道检查能确立的事情：
 
 | 查了什么 | 怎么查 | 结果 |
 | --- | --- | --- |
 | 带 router 的模块、或 core 按名字索取的模块，能否被开关打开 | `overlay/services/web/modules` 里每个 `index.mjs` 对 `enabledModules()`；再把镜像 `app/src` 与 `frontend/js` 里每个 `hasFeature('X')` 对最终序列 | 2 个模块不可达（`symbol-palette`、`instance-features`）；都已修复，而且这道检查现在进了 `tests/verify-overlay.sh` 与 `tests/overlay-reachability.test.mjs` |
 | 某个注册表键被填了却没人要 | `settings.frontend.cjs` 填的 11 个键对镜像里每一个 `importOverleafModules('X')` | 11/11 都有消费者——没有死配置 |
+| 某个键被填了但填得**不完整** | 那个分支为这些键各自注册的条目对 overlay 注册的条目 | 这是集合比较会漏掉的那一种。`autoCompleteExtensions` 需要**两个**扩展——`Ctrl-Space` 键绑定，以及在 `\cite{...}` 里放一个 *Search* 按钮的那条提示——而当时只注册了键绑定。其他每一道检查都通过，功能却依然看不见，因为那个快捷键在浏览器看到它之前就被输入法截走了；规则见 `DEVELOP_SKILL.MD` S20 |
 | core 索要的键在本镜像里是空的 | 同样抽取，再查该键在镜像 `settings.defaults.js` 里的初始化 | 46 个键，全都是本镜像没有移植的 Pro 功能（清单见下）——不是缺陷，而是未来移植的工作面 |
 | 前端会去取某个 URL | 移植模块里每个 `getJSON('/...')` 对序列中模块的 router | 2 个 URL（`/system/features`、`/workbench/access`），都有服务 |
 | 模块读了没人定义的设置 | 移植模块里的 `Settings.x` 对镜像的 `settings.defaults.js`、`settings.js` 与 overlay | 第一眼有 6 个像是未定义，实际 6 个都有——三个由模块自己设置，一个是路由局部变量；同一道检查在更早一轮抓到过唯一一个真案例（`clsi.docker.user`，§5） |

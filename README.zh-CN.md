@@ -258,7 +258,7 @@ OVERLEAF_OIDC_CALLBACK_URLS: http://192.168.1.10:8080/login/oidc/callback, https
 - 需要开放 `openid` 与 `email` scope（默认还会请求 `profile`，若 discovery
   文档显示提供方不支持则会自动略过）。Userinfo 响应必须包含 `sub` 与
   `email` 声明；如果存在 `given_name`、`family_name`、`name`、
-  `preferred_username` 也会被使用。
+  `preferred_username`（或 `username`）也会被使用。
 
 ### 行为说明
 
@@ -473,11 +473,15 @@ OVERLEAF_ENABLE_SYMBOL_PALETTE=true
   开关：不设这个变量，面板在 bundle 里，却没有任何办法打开它。它必须是**同一次**镜像
   重建，因为这个开关决定按钮存不存在，而注册表决定它有没有东西可显示。
 - **引用选择器。** 没有变量。把光标放在 `\cite{...}` 的花括号之间（或者选中里面已有的
-  键），按 **Ctrl-Space**：当光标位于 cite 参数内部时，这个键打开的是选择器而不是普通的
-  补全列表——普通补全用的是 `Alt-Space`。它需要项目里有一个 `.bib` 文件，而且要让列表
-  有内容，还得在编辑器设置里把该文件设为 *root bib document*。它自己没有按钮——工具栏
-  的 *Insert citation* 只写出那个随后由选择器打开的 `\cite{}`。它还带来了比基础镜像自带
-  的更好的参考文献索引，所以补全与选择器对「这个项目引用了什么」的看法是一致的。
+  键），**左花括号上方会出现一条提示**，写着 *Open advanced reference search*，并带一个
+  **Search** 按钮——点提示或点按钮都会打开选择器。另有一条键盘路径：在 cite 参数内按
+  `Ctrl-Space`（普通补全列表在 `Alt-Space`），但**这个快捷键经常被别的东西占用**：macOS
+  上被系统占用，Windows 与 Linux 上被输入法占用——输入法用它在中英文之间切换，浏览器
+  根本看不到这个按键。这正是那条提示存在的原因：如果 `Ctrl-Space` 对你没有反应，就用
+  按钮，不要由此断定选择器不存在。它需要项目里有一个 `.bib` 文件，而且要让列表有内容，
+  还得在编辑器设置里把该文件设为 *root bib document*。它自己没有按钮——工具栏的
+  *Insert citation* 只写出那个随后由选择器来填写内容的 `\cite{}`。它还带来了比基础镜像
+  自带的更好的参考文献索引，所以补全与选择器对「这个项目引用了什么」的看法是一致的。
 
 ## 字体
 
