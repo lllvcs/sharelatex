@@ -237,6 +237,11 @@ webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以�
 | 其他工作 | 一处 import 替换；`workbench` 要排在 `error-assistant` 之前 | 插在 `user-activate` **之前** | 无 |
 | 需要外部服务 | 一个 AI 网关 | 无 | 无 |
 | 需要重建 | 需要 | 需要 | 需要 |
+| 由哪个开关打开 | `AI_ENABLED`（外加 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`） | `OVERLEAF_ENABLE_ADMIN_TOOLS` | 无——它就在 bundle 里，没有开关 |
+
+同一轮移植的符号面板有自己的开关（`OVERLEAF_ENABLE_SYMBOL_PALETTE`），尽管它的
+`index.mjs` 什么都不注册——§8.5 解释了为什么模块序列同时是功能开关，而不只是一份加载
+清单。
 
 有三件事值得记下来，因为它们并不显然：
 
