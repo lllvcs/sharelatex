@@ -340,8 +340,9 @@ Three things are worth recording because they were not obvious:
 
 Two ported features shipped, were compiled, passed every check - and did not
 appear in a real deployment (§8.5). That is a class of mistake, not an incident, so
-the whole overlay was audited for it by extraction, in the four directions a name
-has to match:
+the whole overlay was audited for it by extraction, in the six directions a name
+has to match - the last three added once the first three came back clean, because
+"the rest of this kind" is not something three checks can establish:
 
 | What was checked | How | Result |
 | --- | --- | --- |
@@ -349,6 +350,15 @@ has to match:
 | a registry key is filled but nothing asks for it | the 11 keys `settings.frontend.cjs` fills against every `importOverleafModules('X')` in the image | 11/11 have consumers - no dead configuration |
 | the core asks for a key this image leaves empty | the same extraction, then the key's initialiser in the image's `settings.defaults.js` | 46 keys, all of them Pro features this image does not port (listed below) - not defects, but the catalogue a future port works from |
 | a frontend fetches a URL | every `getJSON('/...')` in the ported modules against the routers of the modules in the sequence | 2 URLs (`/system/features`, `/workbench/access`), both served |
+| a module reads a setting nothing defines | `Settings.x` in the ported modules against the image's `settings.defaults.js`, its `settings.js` and the overlay | 6 looked undefined at first, all six are set - three by the module itself, one as a route local; the same check found the one real case in an earlier round (`clsi.docker.user`, §5) |
+| a component reads page metadata nothing sets | every `getMeta('ol-...')` in the ported frontends against the image's views and `app/src` | 13 metas, all set: the core's own views set the shared ones, the overlay's views (`manage-users-react.pug`, `manage-projects-react.pug`) set the admin panel's. Two (`ol-workbenchDefaultModel`, `ol-workbenchDefaultTools`) are read with an explicit default and set by nobody - not even the fork - so they are operator overrides that never arrived rather than a defect |
+
+The first pass of that last check reported six settings and six metas as undefined, and
+**all twelve were false positives of the checker**: it read `app/src` but not the
+`.pug` views, where most metadata is actually set, and it looked for `Settings.x =`
+but not for assignments through `res.locals`. Worth recording because the audit's
+own tooling is the thing most likely to be wrong: every hit was confirmed by hand
+before it was believed, and none of the twelve survived that.
 
 The 46 empty keys are worth keeping as a list because they *are* the remaining
 surface: `sourceEditorToolbarComponents`, `sourceEditorToolbarButtonGroups`,
@@ -375,6 +385,18 @@ integrations (Zotero, Mendeley); `importProjectFromGithubMenu`,
 everything else. None of them belongs to the three features that were ported:
 the reference picker needs `referenceIndices`, `mainEditorLayoutModals` and
 `autoCompleteExtensions`, and the overlay fills all three.
+
+**What the audit concludes.** One class of defect, six ways to hit it, **two
+instances - the two that were reported and fixed**. Everything else resolves: the
+registry keys the overlay fills all have consumers, the settings the ported modules
+read are all set (by the modules themselves, by the settings file, or as route
+locals), the metadata the ported components read is set by the core's views or by
+the overlay's own, the two URLs the frontends fetch are served, no `@modules/`
+import points at a module this overlay does not ship, and every registry path
+resolves to a file. The class is now checked mechanically on both sides - `tests/overlay-reachability.test.mjs`
+in the repository, and the feature-name comparison in `tests/verify-overlay.sh`
+inside the image - and the image-side one was confirmed to fail when the bug is put
+back.
 
 **What this audit does not cover.** A name that resolves can still be the wrong
 name: nothing here would notice a registry key pointing at a component that exists
