@@ -123,8 +123,8 @@ router serves - were checked by hand when this was written; `DEVELOP_EXPERIMENT.
 positives its first pass produced.
 
 ```sh
-docker run --rm -v "$PWD/overlay:/overlay:ro" --entrypoint=/bin/bash \
-  lvcs/sharelatex -c 'python3 /overlay/../../tests/audit-modules.py'
+docker run --rm -v "$PWD/overlay:/overlay:ro" -v "$PWD/tests:/tests:ro" \
+  --entrypoint=/bin/bash lvcs/sharelatex -c 'python3 /tests/audit-modules.py'
 ```
 
 Its two current findings are informational: `ol-workbenchDefaultModel` and

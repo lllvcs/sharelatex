@@ -7,8 +7,12 @@ one through a route that 404'd. Reading a module's `index.mjs` was not enough to
 see either, so this asks four questions instead, all of them mechanically:
 
   1. which modules does anything ask for by name, and are they in the sequence?
-  2. do two modules register the same route? (the admin panel nearly lost
-     `/admin/user` to the base image's `user-activate` that way)
+  2. do two *ported* modules register the same route? (the collision that
+     mattered was with the base image instead - `admin-tools` and its
+     `user-activate` both claim `/admin/user` - and that one is not visible from
+     here, because the base image's modules are not in this tree. It is covered by
+     `MODULE_PLACEMENT` in `overlay/etc/overleaf/overlay-modules.cjs` and asserted
+     in `tests/overlay-settings.test.mjs`)
   3. does a module's frontend read a `getMeta('ol-...')` the server never sends?
   4. is every registry key the rebuild fills actually consumed by the core, and
      every key the core consumes that a ported module needs actually filled?
@@ -19,8 +23,8 @@ serves. `DEVELOP_EXPERIMENT.MD` section 3.4 has all six, with their results.
 
 Run it inside the built image with both trees mounted:
 
-    docker run --rm -v "$PWD/overlay:/overlay:ro" --entrypoint=/bin/bash \\
-      lvcs/sharelatex -c 'python3 /overlay/../../tests/audit-modules.py'
+    docker run --rm -v "$PWD/overlay:/overlay:ro" -v "$PWD/tests:/tests:ro" \
+      --entrypoint=/bin/bash lvcs/sharelatex -c 'python3 /tests/audit-modules.py'
 
 Findings are reported, not judged. The two it prints today are metas the workbench
 frontend reads with an explicit fallback, which section 3.4 confirms are operator
