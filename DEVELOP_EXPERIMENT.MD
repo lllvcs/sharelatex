@@ -842,6 +842,15 @@ reference picker's modal opens. All three need a running instance.
    The rule: a ported module belongs in the sequence if *anything* asks for it by
    name, whether that is a registry key, a route, or a `hasFeature` check. Deciding
    by reading `index.mjs` alone is how both were missed.
+   Both were found by a deployment rather than by a test, so the whole overlay was
+   then audited for the same mistake in six directions; §3.4 records what was
+   checked, that it found no third instance, and that **all twelve of the first
+   pass's findings were the checker's own fault**. A check that reports a defect has
+   to be checked too. The narrow guard now lives in `tests/verify-overlay.sh` (the
+   core's `hasFeature` names against the sequence) and `tests/overlay-reachability.test.mjs`
+   (the repository-side half), and it is negative-tested: with
+   `OVERLEAF_ENABLE_SYMBOL_PALETTE=false` it reports exactly
+   `unreachable: ["symbol-palette"]`.
 6. **`OVERLEAF_CONFIG` is now part of the contract.** It points at the settings
    file of this image; a deployment that overrides it loses the module
    registration without an error, and the only symptom is a missing feature.
