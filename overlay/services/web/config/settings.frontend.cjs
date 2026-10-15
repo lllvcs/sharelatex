@@ -54,6 +54,15 @@ module.exports = {
     ],
     autoCompleteExtensions: [
       module_('reference-picker/frontend/js/extensions/reference-picker-keybinding'),
+      // The visible half of the feature. The keybinding above reacts to
+      // Ctrl-Space inside a `\cite{}` argument only, and that shortcut is captured
+      // by the operating system on some machines - the module's own comment says
+      // so. Without this extension there is no hint and no button, so the picker
+      // looks missing even though it is in the bundle and the bundle is correct.
+      // The CE core has neither: the i18n keys it uses are in the image's locale
+      // files, but nothing refers to them, which is the remnant of the Pro
+      // component this file recreates.
+      module_('reference-picker/frontend/js/extensions/reference-search-hint'),
     ],
 
     // ---------------------------------------------------------------------

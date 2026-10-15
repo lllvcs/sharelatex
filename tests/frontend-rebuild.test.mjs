@@ -45,29 +45,44 @@ const settingsDir = dirname(settingsPath)
 // feature exists in the bundle with nothing in it.
 const EXPECTED = {
   // symbol palette: the core renders whatever is registered under it
-  sourceEditorSymbolPalette:
+  sourceEditorSymbolPalette: [
     'modules/symbol-palette/frontend/js/components/symbol-palette',
+  ],
   // reference picker: the base image ships a basic index and no picker
-  referenceIndices:
+  referenceIndices: [
     'modules/reference-picker/frontend/js/reference-index/advanced-reference-index',
-  mainEditorLayoutModals:
+  ],
+  mainEditorLayoutModals: [
     'modules/reference-picker/frontend/js/components/reference-picker-controller',
-  autoCompleteExtensions:
+  ],
+  // Two extensions, and both are needed: the first reacts to Ctrl-Space inside a
+  // `\cite{}`, the second is the hint and the button that make the picker visible
+  // to someone who does not know the shortcut - or whose operating system eats it.
+  // Shipping only the first is how the picker came to look missing.
+  autoCompleteExtensions: [
     'modules/reference-picker/frontend/js/extensions/reference-picker-keybinding',
+    'modules/reference-picker/frontend/js/extensions/reference-search-hint',
+  ],
   // the AI assistant and the error assistant
-  rootContextProviders:
+  rootContextProviders: [
     'modules/workbench/frontend/js/context/workbench-settings-context',
-  mainEditorLayoutPanels:
+  ],
+  mainEditorLayoutPanels: [
     'modules/workbench/frontend/js/components/workbench-dock',
-  railEntries: 'modules/workbench/frontend/js/workbench-rail-entry',
-  sourceEditorExtensions:
+  ],
+  railEntries: ['modules/workbench/frontend/js/workbench-rail-entry'],
+  sourceEditorExtensions: [
     'modules/error-assistant/frontend/js/extensions/previous-fix',
-  pdfLogEntryHeaderActionComponents:
+  ],
+  pdfLogEntryHeaderActionComponents: [
     'modules/error-assistant/frontend/js/components/suggest-fix-button',
-  pdfLogEntryComponents:
+  ],
+  pdfLogEntryComponents: [
     'modules/error-assistant/frontend/js/components/error-assistant',
-  pdfLogEntriesComponents:
+  ],
+  pdfLogEntriesComponents: [
     'modules/error-assistant/frontend/js/components/previous-fix-entry',
+  ],
 }
 
 // The strings that prove a component reached the bundle; `tests/verify-overlay.sh`
@@ -82,40 +97,51 @@ const MARKERS = {
     'modules/symbol-palette/frontend/js/components/symbol-palette-close-button.js',
   'references-search-modal':
     'modules/reference-picker/frontend/js/components/reference-picker-modal.tsx',
+  // The hint inside a \cite{}: its class name is unique to this module - the CE
+  // core has neither the string nor anything that refers to the i18n keys it
+  // uses. It is the marker that would have caught the missing extension, because
+  // the modal marker above is in the bundle either way.
+  'ol-cm-references-search-hint-inner':
+    'modules/reference-picker/frontend/js/extensions/reference-search-hint.ts',
   'workbench-ai-message':
     'modules/workbench/frontend/js/components/workbench-chat.tsx',
 }
 
 test('the registry has every key the core frontend asks for', () => {
   assert.ok(settings.overleafModuleImports, 'overleafModuleImports is missing')
-  for (const key of Object.keys(EXPECTED)) {
+  for (const [key, expected] of Object.entries(EXPECTED)) {
     assert.ok(
       Array.isArray(settings.overleafModuleImports[key]),
       `${key} is not an array`
     )
+    // As many entries as the feature needs, no more: a key with fewer entries than
+    // expected is a part of the feature that never reaches the bundle - which is
+    // how the reference picker shipped without its hint.
     assert.equal(
       settings.overleafModuleImports[key].length,
-      1,
-      `${key} should have exactly one entry`
+      expected.length,
+      `${key} should have ${expected.length} entry/entries, not ${settings.overleafModuleImports[key].length}`
     )
   }
 })
 
 test('every registered path resolves to a file webpack can find', () => {
   for (const [key, expected] of Object.entries(EXPECTED)) {
-    const [registered] = settings.overleafModuleImports[key]
-    // webpack resolves the extension itself, so the extensionless path is right -
-    // but something has to be there, and it has to be the file the key means.
-    assert.ok(
-      ['', '.js', '.jsx', '.ts', '.tsx'].some(extension =>
-        existsSync(registered + extension)
-      ),
-      `nothing at ${registered} (for ${key})`
-    )
-    assert.ok(
-      registered.split(sep).join('/').endsWith(expected),
-      `${key} should point at ${expected}, not ${registered}`
-    )
+    const registered = settings.overleafModuleImports[key]
+    for (const path of expected) {
+      // webpack resolves the extension itself, so the extensionless path is right -
+      // but something has to be there, and it has to be the file the key means.
+      const match = registered.find(entry =>
+        entry.split(sep).join('/').endsWith(path)
+      )
+      assert.ok(match, `${key} should point at ${path}, not ${registered.join(', ')}`)
+      assert.ok(
+        ['', '.js', '.jsx', '.ts', '.tsx'].some(extension =>
+          existsSync(match + extension)
+        ),
+        `nothing at ${match} (for ${key})`
+      )
+    }
   }
 })
 

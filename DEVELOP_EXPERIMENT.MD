@@ -345,14 +345,15 @@ Three things are worth recording because they were not obvious:
 
 Two ported features shipped, were compiled, passed every check - and did not
 appear in a real deployment (§8.5). That is a class of mistake, not an incident, so
-the whole overlay was audited for it by extraction, in the six directions a name
-has to match - the last three added once the first three came back clean, because
-"the rest of this kind" is not something three checks can establish:
+the whole overlay was audited for it by extraction, in the seven directions a name
+has to match - each added once the previous ones came back clean, because "the rest
+of this kind" is not something a few checks can establish:
 
 | What was checked | How | Result |
 | --- | --- | --- |
 | a module that carries a router, or that the core asks for by name, is switchable on | every `index.mjs` in `overlay/services/web/modules` against `enabledModules()`, then every `hasFeature('X')` in the image's `app/src` and `frontend/js` against the resulting sequence | 2 modules were unreachable (`symbol-palette`, `instance-features`); both fixed, and the check is now in `tests/verify-overlay.sh` and `tests/overlay-reachability.test.mjs` |
 | a registry key is filled but nothing asks for it | the 11 keys `settings.frontend.cjs` fills against every `importOverleafModules('X')` in the image | 11/11 have consumers - no dead configuration |
+| a key is filled but **incompletely** | the entries the fork registers for each of those keys against the entries this overlay registers | this is the one a set comparison misses. `autoCompleteExtensions` needs **two** extensions - the `Ctrl-Space` keybinding and the hint that puts a *Search* button in a `\cite{...}` - and only the keybinding was registered. Every other check passed and the feature was still invisible, because the shortcut is taken by the input method before the browser sees it; `DEVELOP_SKILL.MD` S20 has the rule |
 | the core asks for a key this image leaves empty | the same extraction, then the key's initialiser in the image's `settings.defaults.js` | 46 keys, all of them Pro features this image does not port (listed below) - not defects, but the catalogue a future port works from |
 | a frontend fetches a URL | every `getJSON('/...')` in the ported modules against the routers of the modules in the sequence | 2 URLs (`/system/features`, `/workbench/access`), both served |
 | a module reads a setting nothing defines | `Settings.x` in the ported modules against the image's `settings.defaults.js`, its `settings.js` and the overlay | 6 looked undefined at first, all six are set - three by the module itself, one as a route local; the same check found the one real case in an earlier round (`clsi.docker.user`, §5) |
@@ -848,7 +849,7 @@ reference picker's modal opens. All three need a running instance.
    name, whether that is a registry key, a route, or a `hasFeature` check. Deciding
    by reading `index.mjs` alone is how both were missed.
    Both were found by a deployment rather than by a test, so the whole overlay was
-   then audited for the same mistake in six directions; §3.4 records what was
+   then audited for the same mistake in seven directions; §3.4 records what was
    checked, that it found no third instance, and that **all twelve of the first
    pass's findings were the checker's own fault**. A check that reports a defect has
    to be checked too. The narrow guard now lives in `tests/verify-overlay.sh` (the

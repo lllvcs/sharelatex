@@ -524,8 +524,26 @@ the *image's* core ask for a feature name the sequence does not contain - is in
 **And check the check.** A reachability check that cannot fail is worse than none:
 run it once with the switch removed and confirm it reports the module (it does -
 that is how the two above were confirmed fixed). Then re-run the whole audit when
-the module set changes: `DEVELOP_EXPERIMENT.MD` §3.4 is the four-direction version,
+the module set changes: `DEVELOP_EXPERIMENT.MD` §3.4 is the six-direction version,
 including the registry keys, where the answer is a list rather than a pass.
+
+**A registry key can also be filled *incompletely*, and that is a third way to be
+unreachable.** The reference picker needs **two** extensions under
+`autoCompleteExtensions` - the `Ctrl-Space` keybinding *and* the hint that puts a
+*Search* button inside a `\cite{...}`. Only the first was registered, and every
+check passed: the module loaded, the modal was in the bundle, the markers were
+found, the key was filled. The feature was reachable in principle and invisible in
+practice, because the shortcut never arrives - the input method switches between
+Chinese and English on Windows, the system takes it on macOS. The person who
+reported it had concluded the feature was not ported at all.
+
+Two rules. **Read what the original registers, entry by entry** - comparing the
+*set of keys* is not enough, which is what the audit's registry direction does.
+And **a feature whose only way in is a keyboard shortcut is not shipped**: give it
+something visible, then prove the visible one is in the bundle by grepping for a
+string only it contains. `ol-cm-references-search-hint-inner` is a marker in
+`tests/verify-overlay.sh` for exactly that reason - the modal marker was in the
+bundle all along and would never have caught this.
 
 ---
 

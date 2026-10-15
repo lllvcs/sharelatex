@@ -183,7 +183,7 @@ docker rm tmp
 | File | Change |
 | --- | --- |
 | `modules/symbol-palette/` | **new directory**: the symbol palette's components, contributed through `sourceEditorSymbolPalette`. Its `index.mjs` registers nothing, so it is easy to mistake for a pure frontend module - but the editor gates its toolbar button on `Features.hasFeature('symbol-palette')`, which *is* the module list, so it has to be in `moduleImportSequence` to be reachable at all |
-| `modules/reference-picker/` | **new directory**: the BibTeX reference picker and a better reference index, contributed through `referenceIndices`, `mainEditorLayoutModals` and `autoCompleteExtensions`. It is opened by its own `Ctrl-Space` binding inside a `\cite{...}`; neither the core nor the module has a button for it. Deliberately **not** in `moduleImportSequence`: nothing asks for a feature of that name and its `index.mjs` is an empty object |
+| `modules/reference-picker/` | **new directory**: the BibTeX reference picker and a better reference index. Three registry entries carry it - `referenceIndices` (the index), `mainEditorLayoutModals` (the modal) and `autoCompleteExtensions` (**two** extensions: the `Ctrl-Space` keybinding and the hint). The hint is what makes the feature visible: it appears above the opening brace of a `\cite{...}` with a *Search* button, and the shortcut alone is not enough because the operating system or the input method often takes it (`Ctrl-Space` switches between Chinese and English on Windows). The module's `index.mjs` is an empty object, so it is deliberately **not** in `moduleImportSequence`: nothing asks for a feature of that name |
 
 ### The frontend registry
 
@@ -338,10 +338,15 @@ own.
   imports a permission middleware from `workbench`. Leave the first one out and
   the panel renders greyed out instead of missing - the request it makes 404s and
   the client falls back to "this instance has no AI".
-- **The reference picker has no switch and no button.** It is in the bundle, and
-  it opens on `Ctrl-Space` while the cursor is inside a `\cite{...}` argument
-  (`Alt-Space` is the ordinary completion). It needs a `.bib` file in the project
-  and, for the list to fill, that file set as the *root bib document*.
+- **The reference picker has no switch and no toolbar button, but it does have a
+  hint.** It is in the bundle, and it opens either from the hint that appears
+  inside a `\cite{...}` argument (a *Search* button, which is the route to give
+  people) or from `Ctrl-Space` there (`Alt-Space` is the ordinary completion).
+  Registering only the keybinding extension and not the hint is what made it look
+  missing: the shortcut is taken by the input method on Windows - it switches
+  between Chinese and English - so the mouse route is the one that works. It needs
+  a `.bib` file in the project and, for the list to fill, that file set as the
+  *root bib document*.
 
 ### Sandboxed compiles
 

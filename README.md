@@ -543,14 +543,20 @@ OVERLEAF_ENABLE_SYMBOL_PALETTE=true
   because the flag decides whether the button exists while the registry decides
   whether it has anything to show.
 - **Reference picker.** No variable. Put the cursor between the braces of a
-  `\cite{...}` (or select the keys already in one) and press **Ctrl-Space**: when
-  the cursor is inside a cite argument, that key opens the picker instead of the
-  ordinary completion list, which is what `Alt-Space` is for. It needs a `.bib`
-  file in the project and, for the list to be populated, that file set as the
-  *root bib document* in the editor settings. There is no button for it - the
-  toolbar's *Insert citation* only writes the `\cite{}` that the picker then opens
-  on. It also brings a better reference index than the base image's, so the
-  completion and the picker agree on what the project cites.
+  `\cite{...}` (or select the keys already in one) and a **hint appears above the
+  opening brace**, saying *Open advanced reference search* with a **Search**
+  button - click either one and the picker opens. There is also a keyboard route,
+  `Ctrl-Space` inside the cite argument (the ordinary completion list is on
+  `Alt-Space`), but **that shortcut is often taken by something else**: on macOS
+  by the system, and on Windows and Linux by the input method, which switches
+  between Chinese and English rather than letting the browser see the key. That is
+  why the hint exists - if `Ctrl-Space` does nothing for you, use the button, and
+  do not conclude the picker is missing. It needs a `.bib` file in the project
+  and, for the list to be populated, that file set as the *root bib document* in
+  the editor settings. There is no toolbar button for it: the toolbar's *Insert
+  citation* only writes the `\cite{}` that the picker then offers to fill. It also
+  brings a better reference index than the base image's, so the completion and the
+  picker agree on what the project cites.
 
 ## Fonts
 
