@@ -45,12 +45,13 @@ echo "== the settings file of this image is complete =="
 # mistake in it stops the container before anything is logged about it.
 OVERLEAF_ENABLE_TRACK_CHANGES=true SANDBOXED_COMPILES=true \
 OVERLEAF_ENABLE_ADMIN_TOOLS=true AI_ENABLED=true \
+OVERLEAF_ENABLE_SYMBOL_PALETTE=true \
 ALL_TEX_LIVE_DOCKER_IMAGES='ghcr.io/ayaka-notes/texlive-full:2026.1' \
 TEX_LIVE_DOCKER_IMAGE='ghcr.io/ayaka-notes/texlive-full:2026.1' \
 MAX_UPLOAD_SIZE=120 \
 node -e "
 const settings = require('/etc/overleaf/settings.overlay.cjs')
-for (const name of ['track-changes', 'sandboxed-compiles', 'admin-tools', 'workbench', 'error-assistant']) {
+for (const name of ['track-changes', 'sandboxed-compiles', 'admin-tools', 'symbol-palette', 'instance-features', 'workbench', 'error-assistant']) {
   if (!settings.moduleImportSequence.includes(name)) throw new Error(name + ' is not in moduleImportSequence: ' + JSON.stringify(settings.moduleImportSequence))
 }
 for (const name of ['history-v1', 'launchpad', 'server-ce-scripts', 'user-activate']) {
@@ -164,11 +165,14 @@ try {
 
   // The modules that were ported from ayakaleaf-pro. Importing each one resolves
   // its whole graph, which is the check that matters: the service loads the
-  // sequence with `await import()`, so one module whose imports do not resolve
+  // sequence with await import(), so one module whose imports do not resolve
   // stops the web service from starting at all. workbench is the interesting one
-  // - it was written against `@ai-sdk/openai-compatible`, which this image does
+  // - it was written against @ai-sdk/openai-compatible, which this image does
   // not declare, so its provider import is substituted (see
   // modules/workbench/app/src/WorkbenchAiClient.mjs).
+  //
+  // No backticks in this string: it is inside double quotes in the shell, where
+  // a backtick starts a command substitution.
   const adminTools = (await import('./modules/admin-tools/index.mjs')).default
   const adminRoutes = []
   adminTools.router.apply({ post: p => adminRoutes.push(p), get: p => adminRoutes.push(p), delete: p => adminRoutes.push(p) })
@@ -188,6 +192,15 @@ try {
 
   const instanceFeatures = (await import('./modules/instance-features/index.mjs')).default
   if (!instanceFeatures || !instanceFeatures.router) throw new Error('instance-features has no router')
+  // This route is what the assistant asks for to learn whether the instance has
+  // AI at all. Without it the request 404s, the client-side hook falls back to
+  // its all-disabled default and the panel renders greyed out rather than absent
+  // - which is how this was found.
+  const featureRoutes = []
+  instanceFeatures.router.apply({ get: p => featureRoutes.push(p), post: p => featureRoutes.push(p) })
+  if (!featureRoutes.includes('/system/features')) {
+    throw new Error('instance-features does not register /system/features: ' + JSON.stringify(featureRoutes))
+  }
 
   fs.writeSync(1, 'overlay modules OK\n')
   process.exit(0)

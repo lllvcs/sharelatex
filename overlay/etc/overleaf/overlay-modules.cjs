@@ -44,10 +44,19 @@ const FALLBACK_MODULE_IMPORT_SEQUENCE = [
  * `admin-tools` has to be loaded before the base image's `user-activate` (see
  * `MODULE_PLACEMENT`), which is why it is inserted rather than appended.
  *
- * `reference-picker` is deliberately absent: its `index.mjs` is an empty object -
- * everything it is lives in the frontend, through the registry - so naming it in
- * the sequence would register nothing. It reaches the browser because the
- * frontend rebuild compiles it, and that is decided at image build time.
+ * The sequence is also a **feature flag**: for these modules,
+ * `Features.hasFeature(name)` is `Settings.moduleImportSequence.includes(name)`,
+ * and the core frontend gates UI on it. `symbol-palette` is the clearest case -
+ * its `index.mjs` registers nothing at all, so it looks like a pure frontend
+ * module, but the project page sends
+ * `ol-symbolPaletteAvailable: Features.hasFeature('symbol-palette')` and the
+ * editor only renders the palette button when that is true. Leaving it out of the
+ * sequence compiles the palette into the bundle and never shows it.
+ *
+ * `reference-picker` really is frontend-only - nothing asks the server for a
+ * feature of that name - so it is deliberately absent: naming it here would
+ * register nothing. It reaches the browser because the frontend rebuild compiles
+ * it, and it is opened by its own `\cite{}` completion, not by a core entry point.
  *
  * @param {Record<string, string | undefined>} env
  * @returns {string[]}
@@ -63,9 +72,18 @@ function enabledModules(env) {
   if (env.OVERLEAF_ENABLE_ADMIN_TOOLS === 'true') {
     modules.push('admin-tools')
   }
+  if (env.OVERLEAF_ENABLE_SYMBOL_PALETTE === 'true') {
+    modules.push('symbol-palette')
+  }
   if (env.AI_ENABLED === 'true') {
-    // workbench first: error-assistant imports its permission middleware.
-    modules.push('workbench', 'error-assistant')
+    // instance-features serves GET /system/features, which the assistant asks for
+    // to learn whether the instance has AI at all. Without the route the request
+    // 404s and the client-side hook falls back to "everything disabled", which is
+    // a greyed-out panel rather than a missing one.
+    //
+    // workbench before error-assistant: error-assistant imports its permission
+    // middleware.
+    modules.push('instance-features', 'workbench', 'error-assistant')
   }
   return modules
 }

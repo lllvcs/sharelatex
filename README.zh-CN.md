@@ -46,9 +46,11 @@
 - **管理面板**：站点管理员用的用户列表与项目列表，需手动开启，见
   [管理面板](#管理面板)
 - **OIDC（OpenID Connect）单点登录**，详见下文
-- 编辑器源码视图里的**符号面板**（symbol palette）与**引用选择器**
-  （reference picker，从项目的 `.bib` 文件里引用文献，索引比基础镜像自带的更好），
-  由可选的前端重建提供，见 [重建前端](#重建前端可选)
+- 编辑器源码视图里的**符号面板**（symbol palette，用
+  `OVERLEAF_ENABLE_SYMBOL_PALETTE=true` 打开）与**引用选择器**
+  （reference picker，在 `\cite{...}` 里按 **Ctrl-Space** 引用 `.bib` 文件里的文献，
+  索引比基础镜像自带的更好），两者都由可选的前端重建提供，见
+  [符号面板与引用选择器](#符号面板与引用选择器)
 - 可配置的上传上限与链接地址（linked URLs），见[环境变量](#环境变量)
 
 ## 安装
@@ -455,6 +457,28 @@ Overleaf 自己的 `ensureUserIsSiteAdmin` 之后。它的页面是 webpack 的*
 **之前**；什么都没有丢掉，而在这两个共享路径上管理面板胜出。
 `tests/overlay-settings.test.mjs` 会检查这个顺序。
 
+## 符号面板与引用选择器
+
+两者都由前端重建编译进 bundle（[重建前端](#重建前端可选)），也都没有后端，但它们的
+打开方式不同——而且符号面板需要一个变量：
+
+```bash
+OVERLEAF_ENABLE_SYMBOL_PALETTE=true
+```
+
+- **符号面板。** 重建会把它编译进去，但编辑器只有在
+  `Features.hasFeature('symbol-palette')` 为真时才渲染它的工具栏按钮（*Insert* 组里、
+  数学公式下拉框旁边的 `Ω`）——而那个判断就是
+  `Settings.moduleImportSequence.includes('symbol-palette')`。所以模块清单同时就是功能
+  开关：不设这个变量，面板在 bundle 里，却没有任何办法打开它。它必须是**同一次**镜像
+  重建，因为这个开关决定按钮存不存在，而注册表决定它有没有东西可显示。
+- **引用选择器。** 没有变量。把光标放在 `\cite{...}` 的花括号之间（或者选中里面已有的
+  键），按 **Ctrl-Space**：当光标位于 cite 参数内部时，这个键打开的是选择器而不是普通的
+  补全列表——普通补全用的是 `Alt-Space`。它需要项目里有一个 `.bib` 文件，而且要让列表
+  有内容，还得在编辑器设置里把该文件设为 *root bib document*。它自己没有按钮——工具栏
+  的 *Insert citation* 只写出那个随后由选择器打开的 `\cite{}`。它还带来了比基础镜像自带
+  的更好的参考文献索引，所以补全与选择器对「这个项目引用了什么」的看法是一致的。
+
 ## 字体
 
 镜像包含 TeX Live 安装（`scheme-full`，即 CTAN 字体归档中所有有 TeX Live 宏包
@@ -563,7 +587,8 @@ Unifont、IPA/Un、Liberation、Carlito/Caladea 等），以及 `fonts/`
 | `ENABLED_LINKED_FILE_TYPES` | 空 | 提供哪些链接文件类型，以逗号分隔（`url`、`project_file`、`project_output_file`）。使用 `url` 时，本镜像还会把 CE 镜像运行却从未指向的 linked-URL 代理配置好，使链接地址真正可用。 |
 | `LINKED_URL_PROXY_HOST` | `127.0.0.1` | linked-URL 代理的主机，用于各服务运行在独立容器中的部署。 |
 | `OVERLEAF_ENABLE_ADMIN_TOOLS` | `false` | 设为 `true` 即开启管理面板：`/admin/user` 的用户列表与 `/admin/project` 的项目列表，供站点管理员使用。见 [管理面板](#管理面板)。 |
-| `AI_ENABLED` | `false` | 设为 `true` 即开启 AI 助手与错误助手。还需要 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`；缺少它们时面板会出现，但每个请求都会失败。见 [AI 助手](#ai-助手)。 |
+| `OVERLEAF_ENABLE_SYMBOL_PALETTE` | `false` | 设为 `true` 即开启编辑器里的符号面板。它无论如何都会被编译进 bundle，但编辑器只在这个开关打开时才渲染它的工具栏按钮——模块清单同时就是项目页面读取的功能开关。见 [符号面板与引用选择器](#符号面板与引用选择器)。 |
+| `AI_ENABLED` | `false` | 设为 `true` 即开启 AI 助手与错误助手，以及它们请求的 `GET /system/features` 路由。还需要 `AI_BASE_URL`、`AI_API_KEY`、`AI_MODEL`；缺少它们时面板会置灰。见 [AI 助手](#ai-助手)。 |
 | `AI_BASE_URL` | – | AI 功能所连的网关，例如 `https://api.deepseek.com` 或 `https://api.openai.com/v1`。它必须说 OpenAI 的 **chat completions** API。 |
 | `AI_API_KEY` | – | 该网关的密钥。它以 `Authorization: Bearer` 头发出，且从不记入日志。 |
 | `AI_MODEL` | – | 用于对话与错误建议的模型，例如 `deepseek-flash`。 |

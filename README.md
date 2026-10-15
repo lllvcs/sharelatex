@@ -51,10 +51,11 @@ Compared to the official `sharelatex/sharelatex` image:
 - **admin panel**: a user list and a project list for site administrators,
   opt-in - see [Admin panel](#admin-panel)
 - **OIDC (OpenID Connect) single sign-on**, see below
-- the **symbol palette** in the editor source view and the **reference picker**
-  (citing from the project's `.bib` file, with a better reference index than the
-  base image's), through the optional frontend rebuild - see
-  [Rebuilding the frontend](#rebuilding-the-frontend-optional)
+- the **symbol palette** in the editor source view (switch it on with
+  `OVERLEAF_ENABLE_SYMBOL_PALETTE=true`) and the **reference picker** (citing from
+  the project's `.bib` file with **Ctrl-Space**, with a better reference index
+  than the base image's), both through the optional frontend rebuild - see
+  [Symbol palette and reference picker](#symbol-palette-and-reference-picker)
 - a configurable upload limit and linked URLs, see
   [Environment variables](#environment-variables)
 
@@ -522,6 +523,35 @@ therefore inserts `admin-tools` *in front of* `user-activate`; nothing is droppe
 and for the two shared paths the admin panel wins.
 `tests/overlay-settings.test.mjs` checks that order.
 
+## Symbol palette and reference picker
+
+Both are compiled into the bundle by the frontend rebuild
+([Rebuilding the frontend](#rebuilding-the-frontend-optional)) and neither has a
+back end, but they are reached in different ways - and the symbol palette needs a
+variable:
+
+```bash
+OVERLEAF_ENABLE_SYMBOL_PALETTE=true
+```
+
+- **Symbol palette.** The rebuild compiles it in, but the editor only renders its
+  toolbar button (the `Ω` next to the maths dropdown, in the *Insert* group) when
+  `Features.hasFeature('symbol-palette')` is true - and that is
+  `Settings.moduleImportSequence.includes('symbol-palette')`. The module list is
+  therefore also a feature flag: without the variable the palette is in the
+  bundle and there is no way to open it. It has to be the *same* image rebuild,
+  because the flag decides whether the button exists while the registry decides
+  whether it has anything to show.
+- **Reference picker.** No variable. Put the cursor between the braces of a
+  `\cite{...}` (or select the keys already in one) and press **Ctrl-Space**: when
+  the cursor is inside a cite argument, that key opens the picker instead of the
+  ordinary completion list, which is what `Alt-Space` is for. It needs a `.bib`
+  file in the project and, for the list to be populated, that file set as the
+  *root bib document* in the editor settings. There is no button for it - the
+  toolbar's *Insert citation* only writes the `\cite{}` that the picker then opens
+  on. It also brings a better reference index than the base image's, so the
+  completion and the picker agree on what the project cites.
+
 ## Fonts
 
 The image contains every font of the TeX Live installation (`scheme-full`,
@@ -647,7 +677,8 @@ Documented in the [OIDC section](#oidc-single-sign-on) above:
 | `ENABLED_LINKED_FILE_TYPES` | empty | Which linked-file types to offer, comma separated (`url`, `project_file`, `project_output_file`). With `url`, this image also configures the linked-URL proxy that the CE image runs but never points at, so that linked URLs work. |
 | `LINKED_URL_PROXY_HOST` | `127.0.0.1` | Host of the linked-URL proxy, for a setup in which the services run in separate containers. |
 | `OVERLEAF_ENABLE_ADMIN_TOOLS` | `false` | Set to `true` to switch on the admin panel: a user list and a project list at `/admin/user` and `/admin/project`, for site administrators. See [Admin panel](#admin-panel). |
-| `AI_ENABLED` | `false` | Set to `true` to switch on the AI assistant and the error assistant. Needs `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` as well; without them the panel appears but every request fails. See [AI assistant](#ai-assistant). |
+| `OVERLEAF_ENABLE_SYMBOL_PALETTE` | `false` | Set to `true` to switch on the symbol palette in the editor. It is compiled into the bundle either way, but the editor only renders its toolbar button when this is on - the module list doubles as the feature flag the project page reads. See [Symbol palette and reference picker](#symbol-palette-and-reference-picker). |
+| `AI_ENABLED` | `false` | Set to `true` to switch on the AI assistant and the error assistant, and the `GET /system/features` route they ask for. Needs `AI_BASE_URL`, `AI_API_KEY` and `AI_MODEL` as well; without them the panel appears greyed out. See [AI assistant](#ai-assistant). |
 | `AI_BASE_URL` | – | The gateway the AI features talk to, e.g. `https://api.deepseek.com` or `https://api.openai.com/v1`. It has to speak the OpenAI **chat completions** API. |
 | `AI_API_KEY` | – | Key for that gateway. It is sent as a `Authorization: Bearer` header and is never logged. |
 | `AI_MODEL` | – | Model used for the chat and for error suggestions, e.g. `deepseek-flash`. |

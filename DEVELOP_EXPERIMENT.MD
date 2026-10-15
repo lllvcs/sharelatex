@@ -753,18 +753,35 @@ reference picker's modal opens. All three need a running instance.
    it constrains implementation.
 3. **The frontend is frozen.** Anything whose user interface a module has to
    contribute is out of reach, no matter how well its backend resolves. §3 has
-   the list.
+   the list. (It stopped being the whole truth once §3.2's rebuild existed, and
+   the entry is kept because it is still true of every module that is *not* in the
+   rebuild.)
 4. **One unresolvable import kills the whole web service**, because the module
    list is imported sequentially at boot.
-5. **`OVERLEAF_CONFIG` is now part of the contract.** It points at the settings
+5. **The module list is also a feature flag, and it is easy to miss that.** For
+   these modules `Features.hasFeature(name)` *is*
+   `Settings.moduleImportSequence.includes(name)`, and the core frontend gates UI
+   on it - so a module can be compiled into the bundle, be completely correct, and
+   still never appear because its name is not in the list. Both halves of the first
+   real bug report came from this: `symbol-palette`'s `index.mjs` registers nothing,
+   so it looks like a pure frontend module and was left out of the sequence, and
+   the project page then sends `ol-symbolPaletteAvailable: false` and the editor
+   never renders the palette button; and `instance-features`, whose only job is the
+   `GET /system/features` route, was left out as a mere dependency, so the
+   assistant's client-side hook got a 404 and fell back to its all-disabled
+   default - a greyed-out panel rather than a missing one.
+   The rule: a ported module belongs in the sequence if *anything* asks for it by
+   name, whether that is a registry key, a route, or a `hasFeature` check. Deciding
+   by reading `index.mjs` alone is how both were missed.
+6. **`OVERLEAF_CONFIG` is now part of the contract.** It points at the settings
    file of this image; a deployment that overrides it loses the module
    registration without an error, and the only symptom is a missing feature.
-6. **The provider-side allow-list is not code.** A multi-host deployment needs
+7. **The provider-side allow-list is not code.** A multi-host deployment needs
    every callback URI registered at the provider
    (`OVERLEAF_OIDC_CALLBACK_URLS`); no change here can substitute for that.
-7. **The deployment half of sandboxed compiles is not code either**, and the
+8. **The deployment half of sandboxed compiles is not code either**, and the
    toolkit gates its half on `SERVER_PRO`.
-8. **Errors that surface late are the expensive ones.** Both the discovery
+9. **Errors that surface late are the expensive ones.** Both the discovery
    failure and the issuer comparison produced "login failed" symptoms far from
    the actual misconfiguration; both now fail at the point of the mistake. The
    second round followed the same rule: an incomplete image configuration, a
@@ -788,10 +805,17 @@ reference picker's modal opens. All three need a running instance.
   `PT Sans`, ...). Vendoring a curated subset would close that without a
   build-time download, and is the one thing `texlive-full`'s approach still has
   over this one.
-- The frontend rebuild exists and works (§3.2) and currently carries one module,
-  `symbol-palette`. What it makes reachable next, and what each still needs, is
-  recorded there: the AI assistant needs a one-line import substitution plus an
-  AI gateway, and the admin panel collides with `user-activate` on `/admin/user`.
+- The frontend rebuild exists and works (§3.2) and now carries four features -
+  `symbol-palette`, `reference-picker`, `admin-tools` and the AI assistant with
+  the error assistant - each with the prerequisites §3.3 records. What is still
+  missing from it is the two modules whose UI needs a back end this image does not
+  have (`github-sync`, `tpr-webmodule`), and the template gallery, whose pages
+  would work but whose gallery needs a template source.
+- The three features ported in §3.3 have been verified at the level of "the module
+  loads, the component is in the bundle, the route answers", and **not** in a
+  browser. The first deployment did find two real defects there (§8.5), so a
+  browser pass over each panel is worth doing once, and is the kind of check no
+  amount of code reading replaces.
   Adding any of them is three edits and a rebuild.
 - `MAX_UPLOAD_SIZE` and the linked-URL proxy are settings only because they are
   read by CE core code; the two features they belong to (large uploads, linked

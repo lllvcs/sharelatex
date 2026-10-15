@@ -66,9 +66,18 @@ test('each feature has its own switch', () => {
   assert.deepEqual(enabledModules({ OVERLEAF_ENABLE_ADMIN_TOOLS: 'true' }), [
     'admin-tools',
   ])
-  // workbench before error-assistant: error-assistant imports a permission
-  // middleware from workbench, and the sequence is walked in order.
+  // The symbol palette has a switch even though its index.mjs registers nothing:
+  // the sequence doubles as a feature flag, and the editor only renders the
+  // palette button when Features.hasFeature('symbol-palette') is true.
+  assert.deepEqual(
+    enabledModules({ OVERLEAF_ENABLE_SYMBOL_PALETTE: 'true' }),
+    ['symbol-palette']
+  )
+  // instance-features first: it serves the GET /system/features route the
+  // assistant asks for, without which the panel renders disabled. Then workbench
+  // before error-assistant, which imports a permission middleware from it.
   assert.deepEqual(enabledModules({ AI_ENABLED: 'true' }), [
+    'instance-features',
     'workbench',
     'error-assistant',
   ])
@@ -77,12 +86,15 @@ test('each feature has its own switch', () => {
       OVERLEAF_ENABLE_TRACK_CHANGES: 'true',
       SANDBOXED_COMPILES: 'true',
       OVERLEAF_ENABLE_ADMIN_TOOLS: 'true',
+      OVERLEAF_ENABLE_SYMBOL_PALETTE: 'true',
       AI_ENABLED: 'true',
     }),
     [
       'track-changes',
       'sandboxed-compiles',
       'admin-tools',
+      'symbol-palette',
+      'instance-features',
       'workbench',
       'error-assistant',
     ]
@@ -94,6 +106,10 @@ test('only the exact value true switches a feature on', () => {
     assert.deepEqual(enabledModules({ OVERLEAF_ENABLE_TRACK_CHANGES: value }), [])
     assert.deepEqual(enabledModules({ SANDBOXED_COMPILES: value }), [])
     assert.deepEqual(enabledModules({ OVERLEAF_ENABLE_ADMIN_TOOLS: value }), [])
+    assert.deepEqual(
+      enabledModules({ OVERLEAF_ENABLE_SYMBOL_PALETTE: value }),
+      []
+    )
     assert.deepEqual(enabledModules({ AI_ENABLED: value }), [])
   }
 })
@@ -155,7 +171,16 @@ test('the insertion still keeps a module a later base image adds', () => {
 test('the AI modules are appended in dependency order', () => {
   assert.deepEqual(
     withOverlayModules(CE_MODULE_SEQUENCE, { AI_ENABLED: 'true' }),
-    [...CE_MODULE_SEQUENCE, 'workbench', 'error-assistant']
+    [...CE_MODULE_SEQUENCE, 'instance-features', 'workbench', 'error-assistant']
+  )
+})
+
+test('the symbol palette is appended when it is asked for', () => {
+  assert.deepEqual(
+    withOverlayModules(CE_MODULE_SEQUENCE, {
+      OVERLEAF_ENABLE_SYMBOL_PALETTE: 'true',
+    }),
+    [...CE_MODULE_SEQUENCE, 'symbol-palette']
   )
 })
 
