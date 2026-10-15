@@ -790,6 +790,13 @@ index runs in a web worker, and where the analysis is - instead of leaving a lis
 that is simply empty for ever. That is the part of this worth keeping: an empty
 result and a dead worker looked identical, and they cost a round each.
 
+**Confirmed in a deployment.** After the classic-worker fix the network tab showed
+the worker and *both* of the chunks it loads coming back 200 - which a module worker
+could never have requested - so the worker was running and answering. The index was
+still empty, which turned out to be §5.7; with that fixed the picker, the search and
+the citation completion all work on the instance. The worker half of this section is
+therefore verified end to end rather than inferred.
+
 ---
 
 ### 5.7 The same empty picker, from a failing history endpoint
@@ -834,12 +841,15 @@ symptom under investigation is probably not its own.
 **What the image now does about it.** The picker's empty-index message names all
 three causes in the order worth checking - no .bib, an unreadable snapshot (this
 one), a worker that is not running - and says that the citation completion is empty
-for the same reason. The deployment fix is one variable: point V1_HISTORY_HOST at
-a host that resolves (127.0.0.1 works when the history service shares the
-container, which is what the deployment in question had: curl 127.0.0.1:3100
-answered {"message":"jwt missing"}).
+for the same reason. The deployment fix is one variable: point `V1_HISTORY_HOST` at
+a host that resolves (`127.0.0.1` works when the history service shares the
+container, which is what the deployment in question had: `curl 127.0.0.1:3100`
+answered `{"message":"jwt missing"}`). With that one change the instance reported
+every feature working - the `latest/history` 500, the empty picker and the empty
+citation completion were all the same fault.
 
 ---
+
 ## 6. Security findings fixed after the first port
 
 The first working version logged people in; these three findings are what made it
@@ -1037,11 +1047,14 @@ reference picker's modal opens. All three need a running instance.
   have (`github-sync`, `tpr-webmodule`), and the template gallery, whose pages
   would work but whose gallery needs a template source.
 - The three features ported in §3.3 have been verified at the level of "the module
-  loads, the component is in the bundle, the route answers", and **not** in a
-  browser. The first deployment did find two real defects there (§8.5), so a
-  browser pass over each panel is worth doing once, and is the kind of check no
-  amount of code reading replaces.
-  Adding any of them is three edits and a rebuild.
+  loads, the component is in the bundle, the route answers", and - for one
+  deployment - in a browser as well: the reference picker, its search, the citation
+  completion, the AI assistant with the error assistant, the admin panel and the
+  symbol palette are all in use there now. That deployment is also where every defect
+  from §8.5 to §5.7 was found, which is the argument for doing the browser pass
+  rather than trusting the checks: nothing in this repository could have seen any of
+  them. What it does **not** cover is a second deployment, a different browser, or
+  the panels' behaviour under load.
 - `MAX_UPLOAD_SIZE` and the linked-URL proxy are settings only because they are
   read by CE core code; the two features they belong to (large uploads, linked
   URLs) are otherwise complete in the image.
