@@ -480,14 +480,64 @@ which passed for the wrong reason until the suite was actually run
 
 ---
 
+## S20. Reachability is a separate property from correctness
+
+**Do.** For every module you port, find what asks for it **by name**, and make
+sure that name resolves. There are three such lookups, and a module can pass every
+other check while failing all three:
+
+- a **registry key** the core asks for with `importOverleafModules('X')`;
+- an **HTTP route** the module registers - which only exists if the module is in
+  `moduleImportSequence`;
+- a **feature name** the core asks for with `Features.hasFeature('X')`, which for
+  these modules *is* `Settings.moduleImportSequence.includes('X')`.
+
+**Because.** Two features were ported, compiled, verified in a real image and did
+not appear in a real deployment, for one reason each (`DEVELOP_EXPERIMENT.MD`
+§8.5):
+
+- `symbol-palette` was left out of the sequence because its `index.mjs` registers
+  nothing - it looks like a pure frontend module. But the editor gates its toolbar
+  button on `getMeta('ol-symbolPaletteAvailable')`, the project page sets that from
+  `Features.hasFeature('symbol-palette')`, and the sequence is what that reads. So
+  the palette was in the bundle with no way to open it, and the *same* list that
+  registers backends is also a feature flag for the frontend. **A ported module
+  belongs in the sequence if anything asks for it by name**, whether that is a
+  route, a registry key or a `hasFeature` check - deciding by reading `index.mjs`
+  alone is how this was missed;
+- `instance-features` was left out as a mere dependency of `workbench`. Its only job
+  is `GET /system/features`, and the client-side hook that calls it is written to
+  **fail closed**: `.catch(() => DISABLED)`. The 404 therefore did not produce an
+  error the operator would see, it produced an assistant panel that rendered
+  disabled - and removing the `disabled` attribute in devtools changed nothing,
+  because React's state was false and the attribute was only its consequence. When
+  a UI is greyed out rather than missing, look for the request that failed and the
+  fallback that swallowed it, not for the component.
+
+**Verify.** `node --test tests/overlay-reachability.test.mjs` answers the half that
+can be asked from the repository (a module with a router needs a switch; every
+`@modules/...` import and every registry path resolves). The half that cannot - does
+the *image's* core ask for a feature name the sequence does not contain - is in
+`tests/verify-overlay.sh`, which runs with all switches on and compares every
+`hasFeature('X')` in the image's `app/src` and `frontend/js` against the sequence.
+
+**And check the check.** A reachability check that cannot fail is worse than none:
+run it once with the switch removed and confirm it reports the module (it does -
+that is how the two above were confirmed fixed). Then re-run the whole audit when
+the module set changes: `DEVELOP_EXPERIMENT.MD` §3.4 is the four-direction version,
+including the registry keys, where the answer is a list rather than a pass.
+
+---
+
 ## Pre-commit checklist
 
-1. `node --test tests/oidc-*.test.mjs tests/overlay-settings.test.mjs tests/sandboxed-compiles-images.test.mjs`
-   (115 cases) — add cases for new behaviour.
+1. `node --test tests/oidc-*.test.mjs tests/overlay-settings.test.mjs tests/sandboxed-compiles-images.test.mjs tests/frontend-rebuild.test.mjs tests/overlay-reachability.test.mjs`
+   (133 cases) — add cases for new behaviour.
 2. Every import is a built-in or declared by the importing service (S2).
 3. Overlay diff reviewed when the upstream base changes (S1).
 4. A new module is in `moduleImportSequence` through the settings file, and
-   `tests/verify-overlay.sh` loads it (S13).
+   `tests/verify-overlay.sh` loads it (S13) — and is reachable under *every* name
+   something looks it up by, including `hasFeature` (S20).
 5. A new feature with a user interface was checked against the frontend registry
    (S14).
 6. New programs the compile toolchain calls are verified at build time (S17).

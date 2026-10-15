@@ -336,6 +336,53 @@ Three things are worth recording because they were not obvious:
   else; its `index.mjs` is an empty object, so it is not in
   `moduleImportSequence` at all.
 
+### 3.4 Auditing the whole overlay for the same mistake
+
+Two ported features shipped, were compiled, passed every check - and did not
+appear in a real deployment (§8.5). That is a class of mistake, not an incident, so
+the whole overlay was audited for it by extraction, in the four directions a name
+has to match:
+
+| What was checked | How | Result |
+| --- | --- | --- |
+| a module that carries a router, or that the core asks for by name, is switchable on | every `index.mjs` in `overlay/services/web/modules` against `enabledModules()`, then every `hasFeature('X')` in the image's `app/src` and `frontend/js` against the resulting sequence | 2 modules were unreachable (`symbol-palette`, `instance-features`); both fixed, and the check is now in `tests/verify-overlay.sh` and `tests/overlay-reachability.test.mjs` |
+| a registry key is filled but nothing asks for it | the 11 keys `settings.frontend.cjs` fills against every `importOverleafModules('X')` in the image | 11/11 have consumers - no dead configuration |
+| the core asks for a key this image leaves empty | the same extraction, then the key's initialiser in the image's `settings.defaults.js` | 46 keys, all of them Pro features this image does not port (listed below) - not defects, but the catalogue a future port works from |
+| a frontend fetches a URL | every `getJSON('/...')` in the ported modules against the routers of the modules in the sequence | 2 URLs (`/system/features`, `/workbench/access`), both served |
+
+The 46 empty keys are worth keeping as a list because they *are* the remaining
+surface: `sourceEditorToolbarComponents`, `sourceEditorToolbarButtonGroups`,
+`railActions`, `railModals`, `railPopovers`, `insertMenuSections`,
+`editorSidebarComponents`, `fileTreeToolbarComponents`, `settingsEntries`,
+`toastGenerators`, `menubarExtraComponents`, `sectionTitleGenerators`,
+`editorFloatingMenuActions`, `visualEditorProviders`, `sourceEditorVisualExtensions`,
+`sourceEditorCompletionSources`, `sourceEditorComponents`, `pythonRunner`,
+`createFileModes`, `devToolbar`, `trashPageTabs`, `contactUsModal`,
+`pdfPreviewPromotions`, `diagnosticActions`, `snapshotUtils`, `labsExperiments`,
+`usGovBanner`, `rollingBuildsUpdatedAlert`, `v1ImportDataScreen`,
+`integrationPanelComponents`, and the `tprFileView*` / `*LinkingWidgets` group that
+belongs to the Zotero and Mendeley integrations.
+
+**And the fork fills 30 keys where this overlay fills 11.** The 19 difference is
+the concrete answer to "what would the next port need": `referenceLinkingWidgets`,
+`referenceSearchSetting` and the four `tprFileView*` keys are the reference
+integrations (Zotero, Mendeley); `importProjectFromGithubMenu`,
+`importProjectFromGithubModalWrapper`, `editorLeftMenuSync` and
+`editorLeftMenuManageTemplate` are GitHub; `pythonRunner`, `fullProjectSearchPanel`,
+`editorSidebarComponents`, `fileTreeToolbarComponents`, `sourceEditorToolbar*`,
+`menubarExtraComponents`, `insertMenuSections`, `sectionTitleGenerators`,
+`editorFloatingMenuActions`, `langFeedbackLinkingWidgets` and `contactUsModal` are
+everything else. None of them belongs to the three features that were ported:
+the reference picker needs `referenceIndices`, `mainEditorLayoutModals` and
+`autoCompleteExtensions`, and the overlay fills all three.
+
+**What this audit does not cover.** A name that resolves can still be the wrong
+name: nothing here would notice a registry key pointing at a component that exists
+but is not the one intended, or a `hasFeature` check the core makes inside a branch
+this image never reaches. The check is for the failure that actually happened -
+compiled, correct, unreachable - and the browser pass §9 asks for is still the only
+thing that covers the rest.
+
 ---
 
 ## 4. Track changes and the review panel

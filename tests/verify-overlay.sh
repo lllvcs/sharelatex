@@ -106,7 +106,15 @@ console.log('  nothing extra is set')
 # @overleaf/settings reads OVERLEAF_CONFIG once, when it is first imported, so
 # the module sequence has to be switched on in the environment of this script
 # for the checks below to see the same configuration a container would.
+#
+# All of them, not just track-changes: the reachability check below compares the
+# feature names the core asks for against the sequence, and a switch that is not
+# set here would make a correctly registered module look unreachable.
 export OVERLEAF_ENABLE_TRACK_CHANGES=true
+export SANDBOXED_COMPILES=true
+export OVERLEAF_ENABLE_ADMIN_TOOLS=true
+export OVERLEAF_ENABLE_SYMBOL_PALETTE=true
+export AI_ENABLED=true
 
 cd $WEB
 
@@ -201,6 +209,36 @@ try {
   if (!featureRoutes.includes('/system/features')) {
     throw new Error('instance-features does not register /system/features: ' + JSON.stringify(featureRoutes))
   }
+
+  // The check that would have caught the symbol palette: the core asks for
+  // features by name, and for a module that name is resolved against
+  // moduleImportSequence, so a module the core asks for and the sequence does not
+  // contain is compiled, correct and unreachable. Only the image's own core can be
+  // asked this question, which is why it lives here and not in the repo tests.
+  const sequence = (await import('@overleaf/settings')).default.moduleImportSequence
+  const asked = new Set()
+  const walk = dir => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = dir + '/' + entry.name
+      if (entry.isDirectory()) walk(full)
+      else if (/\.(mjs|cjs|js|jsx|ts|tsx)$/.test(entry.name)) {
+        for (const hit of fs.readFileSync(full, 'utf8').matchAll(/hasFeature\(\s*'([^']+)'/g)) {
+          asked.add(hit[1])
+        }
+      }
+    }
+  }
+  walk('./app/src')
+  walk('./frontend/js')
+  const shipped = fs.readdirSync('./modules')
+  const unreachable = [...asked].filter(name => shipped.includes(name) && !sequence.includes(name))
+  if (unreachable.length) {
+    throw new Error(
+      'the core asks for these features by name but moduleImportSequence does not contain them, ' +
+        'so their UI can never appear: ' + JSON.stringify(unreachable)
+    )
+  }
+  fs.writeSync(1, '  the core asks for ' + asked.size + ' feature(s) by name; all shipped ones are in the sequence\n')
 
   fs.writeSync(1, 'overlay modules OK\n')
   process.exit(0)
