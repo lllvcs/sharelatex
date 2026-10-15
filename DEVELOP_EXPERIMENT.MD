@@ -311,6 +311,11 @@ actually cost, measured against the image rather than read off the source tree:
 | other work | one import substitution; `workbench` before `error-assistant` | inserted **before** `user-activate` | none |
 | needs a service | an AI gateway | none | none |
 | needs the rebuild | yes | yes | yes |
+| switched on by | `AI_ENABLED` (plus `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`) | `OVERLEAF_ENABLE_ADMIN_TOOLS` | nothing - it is in the bundle and has no switch |
+
+The symbol palette, ported in the same round, has a switch of its own
+(`OVERLEAF_ENABLE_SYMBOL_PALETTE`) even though its `index.mjs` registers nothing -
+§8.5 explains why the sequence is a feature flag and not just a load list.
 
 Three things are worth recording because they were not obvious:
 

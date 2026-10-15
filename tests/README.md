@@ -56,6 +56,13 @@ first.
   is what fails when a package is missing under Yarn PnP);
 - the track-changes module really flips the flag the core reads, registers its
   routes, and `Features.hasFeature('track-changes')` becomes true;
+- the ported modules load (their whole import graph), register the routes they
+  claim, and **every feature name the core asks for is in the sequence** - the
+  check that catches a module which is compiled, correct and unreachable
+  (`DEVELOP_SKILL.MD` S20). It runs with all five switches on:
+  `OVERLEAF_ENABLE_TRACK_CHANGES`, `SANDBOXED_COMPILES`,
+  `OVERLEAF_ENABLE_ADMIN_TOOLS`, `OVERLEAF_ENABLE_SYMBOL_PALETTE` and
+  `AI_ENABLED`;
 - the sandboxed-compiles module derives `imageRoot` / `allowedImageNames` /
   `currentImageName` from the environment;
 - `/etc/overleaf/settings.overlay.cjs` produces the expected

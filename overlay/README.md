@@ -9,6 +9,10 @@ into the `sharelatex/sharelatex` image. It adds:
 | `services/web/modules/track-changes/` | track changes and the review panel (comments, ranges, accept/reject) | `OVERLEAF_ENABLE_TRACK_CHANGES` |
 | `services/web/modules/sandboxed-compiles/` | which TeX Live image a project compiles in | `SANDBOXED_COMPILES` |
 | `services/clsi/app/js/DockerRunner.js`, `DockerLockManager.js`, `seccomp/clsi-profile.json` | the compile service that runs each project in its own container (a Server Pro file) | `SANDBOXED_COMPILES` |
+| `services/web/modules/admin-tools/` | the admin panel: a user list and a project list for site administrators | `OVERLEAF_ENABLE_ADMIN_TOOLS` |
+| `services/web/modules/workbench/`, `modules/error-assistant/`, `modules/instance-features/` | the AI assistant in the editor and the "suggest a fix" button on compile errors | `AI_ENABLED` (with `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`) |
+| `services/web/modules/symbol-palette/`, `modules/reference-picker/` | the symbol palette in the editor and the BibTeX reference picker | `OVERLEAF_ENABLE_SYMBOL_PALETTE` (the palette), and the frontend rebuild for both |
+| `services/web/config/settings.frontend.cjs` | the frontend registry the rebuild reads: which module components webpack compiles into the bundle | `OVERLEAF_REBUILD_FRONTEND=true` at build time |
 | `etc/overleaf/settings.overlay.cjs`, `overlay-modules.cjs` | module registration, `MAX_UPLOAD_SIZE`, the linked-URL proxy | `OVERLEAF_CONFIG` |
 
 The approach is the same as the one used by
@@ -16,7 +20,8 @@ The approach is the same as the one used by
 instead of rebuilding Overleaf from source, the files are overwritten inside
 the image. Overleaf runs its backend directly from these source files
 (`app/src/**/*.mjs`, `modules/**/*.mjs`, `app/views/**/*.pug`), so no
-compilation step is needed.
+compilation step is needed **for the backend**. The frontend is different - see
+below.
 
 The OIDC implementation is a port of the patches from
 [stugen-admins/forks/overleaf-oidc](https://gitlab.informatik.uni-bremen.de/stugen-admins/forks/overleaf-oidc)
@@ -34,18 +39,29 @@ dependencies:
   requires an `analyticsId`, confirms the email through `options.confirmedAt`
   and synchronises the profile with the identity provider on every login).
 
-The track-changes module and the Docker runner are ports from
+The track-changes module, the Docker runner and the four features added later (the
+AI assistant with the error assistant, the admin panel, the symbol palette and the
+reference picker) are ports from
 [ayaka-notes/ayakaleaf-pro](https://github.com/ayaka-notes/ayakaleaf-pro) (an
 Overleaf CE fork with the Server Pro features restored), which is where the
 knowledge of *which* piece CE is missing comes from; see
-[`DEVELOP_EXPERIMENT.MD`](../DEVELOP_EXPERIMENT.MD).
+[`DEVELOP_EXPERIMENT.MD`](../DEVELOP_EXPERIMENT.MD) §3.
 
-The important difference to that fork: it rebuilds Overleaf from source, so it
-can also ship new frontend code. The overlay cannot. Everything it adds is
-therefore **backend or configuration only** - which is exactly why track changes
-and sandboxed compiles are portable (their user interface is part of the CE
-core) and the AI assistant is not (its components are compiled into the
-frontend bundle at build time).
+**The frontend is not frozen, but it is a build step.** This overlay originally
+shipped backend and configuration only, and that is still true of everything that
+is copied into the image at boot. The frontend is compiled into
+`services/web/public/js` by webpack *before* that, so a component a module
+contributes only exists if the bundle was rebuilt: the image carries the frontend
+sources, the webpack configs and the yarn cache, and the `Dockerfile` has an
+opt-in step (`--build-arg OVERLEAF_REBUILD_FRONTEND=true`) that restores the
+webpack toolchain, builds against
+[`services/web/config/settings.frontend.cjs`](services/web/config/settings.frontend.cjs)
+and prunes it again. **Both workflows that build an image pass that argument**, so
+the published image contains the components; a hand-built image without it has the
+routes of those features and no user interface for them, which is why the argument
+is worth checking first when a panel is missing. `README.md` has the two traps
+(webpack without `OVERLEAF_CONFIG` produces an empty bundle *with a green build*)
+and `DEVELOP_EXPERIMENT.MD` §3.2 has the measurements.
 
 
 ## Base version
@@ -146,6 +162,35 @@ docker rm tmp
 | `services/clsi/app/js/DockerRunner.mjs` | **new file**: a one-line re-export of `DockerRunner.js`. The CE code names the runner in two places (`CommandRunner.js` imports it, `config/settings.defaults.cjs` checks that it exists) and releases have used both extensions; shipping both names makes the overlay independent of that |
 | `services/clsi/seccomp/clsi-profile.json` | **new file**: the seccomp profile the compile containers run under. `config/settings.defaults.cjs` reads this path and exits when it is missing, so it is required, not optional |
 
+### AI assistant (the editor panel and the error assistant)
+
+| File | Change |
+| --- | --- |
+| `modules/workbench/index.mjs` | **new file**: derives `Settings.workbenchAi`, `Settings.workbenchWebSearch` and `Settings.workbenchDocsSearch` from `AI_ENABLED`, `AI_BASE_URL`, `AI_API_KEY`, `AI_MODEL`, `AI_IMAGE_MODEL`, `AI_MAX_STEPS`, `AI_PROXY_URL`, `AI_TOKEN_QUOTA`, `AI_TOKEN_QUOTA_PERIOD`, `WEB_SEARCH_*`, `TAVILY_API_KEY` and `DOCS_MCP_URL`, and registers the router |
+| `modules/workbench/app/src/WorkbenchAiClient.mjs` | **new file**, **changed from the original in one import**: it used `createOpenAICompatible` from `@ai-sdk/openai-compatible`, which this image has only in its lockfile - and because the sequence is imported with `await import()`, PnP refusing it would stop the web service from starting. It imports `createOpenAI` from the declared `@ai-sdk/openai` instead, which speaks the same wire protocol, so `WorkbenchController.mjs` asks for `getProvider().chat(...)` (chat completions) rather than relying on what a bare provider call resolves to (`/responses`) |
+| `modules/error-assistant/index.mjs`, `app/src/ErrorAssistantController.mjs` | **new file**: the "suggest a fix" action on a failed compile; imports its permission middleware from `workbench`, so `workbench` has to be loaded first |
+| `modules/instance-features/index.mjs`, `app/src/InstanceFeaturesRouter.mjs` | **new file**: `GET /system/features`, which the assistant asks for to learn whether the instance has AI at all. **This route is load-bearing**: the client-side hook is written to fail closed (`.catch(() => DISABLED)`), so a 404 does not log an error anywhere the operator would look - it renders the panel disabled. See the notes below |
+
+### Admin panel
+
+| File | Change |
+| --- | --- |
+| `modules/admin-tools/` | **new directory**: `GET /admin/user`, `GET /admin/project` and the pages behind them, each behind the core's admin check. Both pages are webpack *page* entrypoints (`frontend/js/pages/**`), which `webpack.config.js` collects on its own, so they need no registry key - but they do need the rebuild |
+| `modules/admin-tools/app/src/UserListController.mjs` | registers the same two paths as the base image's `user-activate`, which is why the module is **inserted** into the sequence rather than appended - see `MODULE_PLACEMENT` and the notes below |
+
+### Symbol palette and reference picker
+
+| File | Change |
+| --- | --- |
+| `modules/symbol-palette/` | **new directory**: the symbol palette's components, contributed through `sourceEditorSymbolPalette`. Its `index.mjs` registers nothing, so it is easy to mistake for a pure frontend module - but the editor gates its toolbar button on `Features.hasFeature('symbol-palette')`, which *is* the module list, so it has to be in `moduleImportSequence` to be reachable at all |
+| `modules/reference-picker/` | **new directory**: the BibTeX reference picker and a better reference index, contributed through `referenceIndices`, `mainEditorLayoutModals` and `autoCompleteExtensions`. It is opened by its own `Ctrl-Space` binding inside a `\cite{...}`; neither the core nor the module has a button for it. Deliberately **not** in `moduleImportSequence`: nothing asks for a feature of that name and its `index.mjs` is an empty object |
+
+### The frontend registry
+
+| File | Change |
+| --- | --- |
+| `config/settings.frontend.cjs` | **new file**: the registry webpack reads when it rebuilds the frontend - eleven keys pointing at the components above, each written relative to the module directory so the file survives being copied to `/overleaf/services/web`. Without `OVERLEAF_CONFIG` webpack would read the base image's own copy of this file, which is empty for all eleven keys, and produce an empty bundle **with a green build** |
+
 ### Settings
 
 | File | Change |
@@ -243,6 +288,17 @@ own.
   walks `Settings.moduleImportSequence` and imports `modules/<name>/index.mjs`
   for each entry. Nothing else in the image changes that sequence, which is why
   the overlay ships a settings file for it - see above.
+- **That list is also a feature flag, and it is easy to miss.** For these modules,
+  `Features.hasFeature(name)` *is* `Settings.moduleImportSequence.includes(name)`,
+  and the core frontend gates UI on it: the editor only renders the symbol palette
+  button when the project page sends `ol-symbolPaletteAvailable: true`, which it
+  reads from `Features.hasFeature('symbol-palette')`. A module can therefore be
+  correct, compiled into the bundle, loaded - and unreachable. The rule the port
+  arrived at: a module belongs in the sequence if *anything* asks for it by name,
+  whether that is a registry key, an HTTP route or a `hasFeature` check.
+  `tests/overlay-reachability.test.mjs` and the feature-name check in
+  `tests/verify-overlay.sh` now enforce it. `DEVELOP_SKILL.MD` S20 and
+  `DEVELOP_EXPERIMENT.MD` §3.4 and §8.5 have the two defects this came from.
 - `modules/track-changes/index.mjs` flips a flag on a core module's export at
   import time (`ProjectEditorHandler.trackChangesAvailable = true`). That is the
   whole switch: the core then reports `features.trackChangesVisible: true` in the
@@ -257,9 +313,35 @@ own.
   decision, not a default.
 - The user interface is reached through the *core* frontend, not through
   `Settings.overleafModuleImports` (the registry that pulls module frontends into
-  the webpack build). That is the reason this feature is portable and, for
-  example, the error assistant is not: its components are compiled into the
-  bundle and a runtime setting cannot add them.
+  the webpack build). That is why this feature needed nothing but a flag, while
+  the AI assistant, the admin panel, the symbol palette and the reference picker
+  each needed the frontend rebuild as well.
+
+### The ported interface features
+
+- **Every one of them needs the rebuild.** Their components are compiled into
+  `public/js` at image build time, so a runtime setting cannot add them: with
+  `OVERLEAF_REBUILD_FRONTEND=false` the routes exist (`/admin/user`,
+  `/workbench/access`, `/system/features`) and no panel appears.
+- **Two switches, not one, for the palette.** The rebuild decides whether the
+  component is in the bundle; `OVERLEAF_ENABLE_SYMBOL_PALETTE` puts the module in
+  the list the page reads for `ol-symbolPaletteAvailable`. Both have to be true,
+  and the failure looks the same from the outside ("the palette is not there")
+  whichever is missing - which is what made it worth writing down.
+- **The admin panel inserts rather than appends.** It and the base image's
+  `user-activate` both register `GET /user/activate` and `GET /admin/user`, and
+  Express gives a path to whoever registers first. `MODULE_PLACEMENT` in
+  `overlay-modules.cjs` puts `admin-tools` in front of it; nothing is dropped, and
+  the order is asserted in `tests/overlay-settings.test.mjs`.
+- **The AI modules have an order and a route.** `instance-features` first (the
+  route the panel asks for), then `workbench`, then `error-assistant`, which
+  imports a permission middleware from `workbench`. Leave the first one out and
+  the panel renders greyed out instead of missing - the request it makes 404s and
+  the client falls back to "this instance has no AI".
+- **The reference picker has no switch and no button.** It is in the bundle, and
+  it opens on `Ctrl-Space` while the cursor is inside a `\cite{...}` argument
+  (`Alt-Space` is the ordinary completion). It needs a `.bib` file in the project
+  and, for the list to fill, that file set as the *root bib document*.
 
 ### Sandboxed compiles
 
