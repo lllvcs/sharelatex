@@ -556,7 +556,13 @@ OVERLEAF_ENABLE_SYMBOL_PALETTE=true
   the editor settings. There is no toolbar button for it: the toolbar's *Insert
   citation* only writes the `\cite{}` that the picker then offers to fill. It also
   brings a better reference index than the base image's, so the completion and the
-  picker agree on what the project cites.
+  picker agree on what the project cites. That index runs in a web worker, and the
+  worker is the one thing this image has to fix for the feature to work at all: in
+  the base image it is created as a module worker while webpack emits it as a
+  classic script that loads its dependencies with `importScripts`, so it dies before
+  it can answer anything - the search box and the citation completion are both
+  empty in an unmodified image. See `overlay/README.md` and
+  `DEVELOP_EXPERIMENT.MD` §5.6.
 
 ## Fonts
 

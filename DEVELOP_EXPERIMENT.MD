@@ -704,6 +704,85 @@ way and now written down where a user would look for them:
   under two of the three engines, which is worth knowing before blaming the
   image: `texmf.cnf` has `shell_escape = t` and the fail is the engine's.
 
+### 5.6 The reference index never worked, in the base image either
+
+The reference picker's search box did nothing at all: it opened, it took input,
+and no query - not even the empty one it issues itself when it opens - produced a
+result. The picker is not what was broken, and neither was the index class this
+overlay adds. The worker that runs the index never ran.
+
+The chain, each step checked rather than assumed:
+
+1. `references.worker.ts` gets its entries from
+   `importOverleafModules('referenceIndices')`, and the built worker chunk does
+   contain this overlay's `AdvancedReferenceIndex` (it is visible in the chunk, and
+   the fallback `BasicReferenceIndex` is not instantiated) - so the registry was
+   never the problem;
+2. the class itself cannot fail on a real `.bib`: `ReferenceIndex.parseEntries()`
+   runs `setDefaultFields()`, which writes `''` into every missing field, so the
+   `.toLowerCase()` calls on `author`/`journal`/`title`/`date`/`year` are safe
+   (this was the first hypothesis, and it is wrong);
+3. the chunk's own runtime is where it stops. Webpack emits it as a classic
+   script whose chunk loader is
+   `__webpack_require__.f.i = (chunk, promises) => { ... importScripts(...) }`, and
+   it starts with `Promise.all([__webpack_require__.e(2589), __webpack_require__.e(1289)])`
+   - **two more chunks before the entry module runs**;
+4. and the call site created the worker as a *module* worker
+   (`new Worker(url, { type: 'module' })`, which is what all four workers in this
+   image do). `importScripts` does not exist in a module worker, so the two chunk
+   loads fail, the entry module never runs, and with it the
+   `self.addEventListener('message', ...)` that answers `update` and `search`.
+   `ReferenceIndexer.search()` therefore returns a promise that never settles: no
+   error anywhere, no result, and a picker that looks like a search box that
+   ignores you.
+
+**It is a defect of the base image, not of the port.** The worker chunk of a plain
+`sharelatex/sharelatex:6.3.0` build carries the same `importScripts` line and the
+same two-chunk startup, and its call site carries the same `{ type: 'module' }`.
+The citation completion reads `referenceKeys` from the same index, so it had no
+keys to offer either - which is the other half of the report that led here. Of the
+four workers in the image, only this one loads a second chunk, so only this one was
+affected: `command-definition-worker`, `hunspell-worker`, `latex-linter-worker` and
+`pdf-worker` all start with zero chunk loads and work fine as module workers.
+
+**The fix is one line**, and it makes the call site agree with what webpack
+emits: `overlay/services/web/frontend/js/features/ide-react/references/reference-indexer.ts`
+creates the worker without `{ type: 'module' }`. Two other ways were tried first
+and both are wrong, which is worth recording:
+
+- `output.workerChunkLoading: 'import'` in a wrapper webpack config looks like the
+  modern answer, and it does remove `importScripts` - but webpack then emits the
+  worker chunk with a **nested** `export { __webpack_require__ }` (ES module syntax
+  inside the IIFE), which is a syntax error for both a classic and a module worker.
+  Making it valid needs `experiments.outputModule` for the whole build, which would
+  turn every page bundle into an ES module and break the `<script>` tags the views
+  emit;
+- excluding the worker chunks from Terser (which the ESM chunks require) produces a
+  build that passes and a bundle that is still broken, because the syntax error is
+  in the emitted source, not a minification artefact.
+
+**How it was proven without a browser.** The built worker chunk is a plain script;
+it was loaded in Node inside a `vm` context that provides what a *classic* worker
+has - `self`, `postMessage`, `addEventListener` and `importScripts`, the last one
+reading the chunks from disk - and then driven the way `ReferenceIndexer` does
+(`{ type: 'update', changes }`, then `{ id, type: 'search', query }`). With
+`importScripts` present the index answers:
+
+```
+update -> { type: 'updateKeys', keys: <the two keys> }
+search ""          -> ["einstein1905", "knuth1984"]   what the picker asks for on open
+search "einstein"  -> ["einstein1905"]
+search "texbook"   -> ["knuth1984"]                   a title-only match
+```
+
+and without it the same chunk registers no handler at all - which is the
+deployment's symptom, reproduced. `tests/verify-overlay.sh` now checks the pairing
+that neither side shows alone: a worker chunk that loads a second chunk must not
+have a call site that asks for a module worker. The harness itself is not part of
+the repository - it needs the built bundle - but it is four small steps to rebuild
+from this description, and it is what turned "the search box ignores me" into a
+named line of code.
+
 ---
 
 ## 6. Security findings fixed after the first port

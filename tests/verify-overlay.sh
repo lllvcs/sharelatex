@@ -426,6 +426,40 @@ console.log('  the rebuilt manifest has ' + entrypoints.length + ' entrypoints, 
     echo "       empty registry of the base image and produces an equally empty bundle." ; \
     exit 1 ; \
   fi
+
+  # A worker that loads a second chunk must not be created as a *module* worker:
+  # webpack emits worker chunks as classic scripts whose chunk loader calls
+  # `importScripts`, which a module worker does not have. The worker then dies
+  # before registering its message listener, so every message posted to it is
+  # ignored - the reference picker's search box did nothing at all, and the
+  # citation completion lost the keys that come from the same index.
+  # The check pairs the built chunk with the call site, because neither alone says
+  # anything: the chunk always contains the loader, and the call site is fine as
+  # long as the worker never needs a second chunk.
+  for worker in $(ls public/js/*worker-*.js 2>/dev/null) ; do
+    if grep -q "importScripts" "$worker" && grep -qE "\.e\([0-9]" "$worker" ; then
+      name=$(basename "$worker")
+      source=$(echo "$name" | sed 's/-[0-9a-f]\{20\}\.js$//' | sed 's/-worker$//')
+      case "$source" in
+        references)
+          site="frontend/js/features/ide-react/references/reference-indexer.ts" ;;
+        command-definition)
+          site="frontend/js/features/source-editor/utils/command-definitions/command-definition-indexer.ts" ;;
+        latex-linter)
+          site="frontend/js/features/source-editor/languages/latex/linter/latex-linter.ts" ;;
+        hunspell)
+          site="frontend/js/features/source-editor/hunspell/HunspellManager.ts" ;;
+        *)
+          echo "  skipping $name: no known call site" ; continue ;;
+      esac
+      if [ -f "$site" ] && grep -q "type: 'module'" "$site" ; then
+        echo "ERROR: $name loads a second chunk with importScripts, but it is created as a" ; \
+        echo "       module worker in $site - it will never answer a message." ; \
+        exit 1 ; \
+      fi
+      echo "  the $source worker loads extra chunks and is created as a classic worker"
+    fi
+  done
 fi
 
 echo "overlay checks passed"

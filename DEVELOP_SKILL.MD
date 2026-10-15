@@ -547,6 +547,48 @@ bundle all along and would never have caught this.
 
 ---
 
+## S21. A worker and the code that creates it have to agree on what it is
+
+**Do.** Before trusting any worker, check what webpack emitted for it and what the
+call site asks for. Two things have to match, and neither is visible from the
+worker's source:
+
+- **classic or module.** `new Worker(url, { type: 'module' })` needs a chunk that
+  is valid as an ES module; webpack emits a classic IIFE unless the build sets
+  `experiments.outputModule`. A module worker has **no `importScripts`**, which is
+  what webpack's default worker chunk loading calls;
+- **how many chunks it loads.** A worker chunk that starts with
+  `Promise.all([__webpack_require__.e(a), __webpack_require__.e(b)])` is not
+  self-contained: if those loads fail, the entry module never runs, and with it the
+  `self.addEventListener('message', ...)` that would have answered. The failure is
+  **silent** - no exception reaches the page, the `postMessage` promises simply
+  never settle.
+
+**Because.** The reference picker's search box did nothing at all, in a real
+deployment and - as it turned out - in the base image too. The index class was
+correct, the registry pointed at it, the component was in the bundle, and the
+worker it all runs in never started its message loop (`DEVELOP_EXPERIMENT.MD`
+§5.6). Two plausible fixes were tried and both are wrong, which is the useful part:
+
+- `output.workerChunkLoading: 'import'` removes `importScripts`, and webpack then
+  emits the chunk with a **nested** `export { __webpack_require__ }` - a syntax
+  error in both worker types. Making it valid would need a module build for the
+  whole frontend, which breaks the `<script>` tags the views emit;
+- excluding the worker chunks from Terser makes the *build* pass and leaves the
+  bundle just as broken, because the invalid syntax is in the emitted source.
+
+**Verify.** Grep the built worker chunk for `importScripts` and for `.e(` - a chunk
+with both is not self-contained, and then its call site must not say
+`type: 'module'`. `tests/verify-overlay.sh` now checks exactly that pairing for
+every `*worker-*.js` in the bundle, because neither half means anything alone.
+And when a browser is not available, **drive the artifact directly**: the worker
+chunk is a plain script, so a `vm` context with `self`, `postMessage`,
+`addEventListener` and `importScripts` (reading chunks from disk) can be fed the
+same messages the real caller sends, and it will either answer or reproduce the
+silence. That is how this one was named, and it took a few minutes.
+
+---
+
 ## Pre-commit checklist
 
 1. `node --test tests/oidc-*.test.mjs tests/overlay-settings.test.mjs tests/sandboxed-compiles-images.test.mjs tests/frontend-rebuild.test.mjs tests/overlay-reachability.test.mjs`

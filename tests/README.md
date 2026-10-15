@@ -23,6 +23,7 @@ development:
 | `overlay-settings.test.mjs` | `overlay/etc/overleaf/overlay-modules.cjs`: which modules the environment switches on, the upload limit, the compile-container user |
 | `sandboxed-compiles-images.test.mjs` | the TeX Live image list of the sandboxed compiles |
 | `frontend-rebuild.test.mjs` | `overlay/services/web/config/settings.frontend.cjs`: the registry key the core frontend asks for, a path that resolves, and the marker the bundle check greps for |
+| `overlay-reachability.test.mjs` | that a ported feature can be *reached*: a module with a router has a switch, every `@modules/...` import resolves, every registry path exists (`DEVELOP_SKILL.MD` S20) |
 
 ## Example documents
 
@@ -73,7 +74,13 @@ first.
   `OSFONTDIR`) are in `texmf.cnf`, the latexmk configuration provides its custom
   dependencies (knitr, glossaries, nomenclature, asymptote, ...), the LuaTeX font
   database is part of the image, and `run-chktex.sh` produces `output.chktex`;
-- the module tests below, and that the views compile.
+- the module tests below, and that the views compile;
+- **in the rebuilt bundle**: that the module components are in `public/js`, that the
+  core entrypoints survived, that the admin panel's two pages are in the manifest,
+  and that every worker chunk which loads a second chunk with `importScripts` has a
+  call site that does **not** ask for a module worker (`DEVELOP_EXPERIMENT.MD`
+  §5.6 - a module worker has no `importScripts`, so such a worker never answers,
+  silently).
 
 The module tests run without Overleaf, so they also run locally:
 
