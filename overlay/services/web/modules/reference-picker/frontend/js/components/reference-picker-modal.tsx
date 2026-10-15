@@ -80,6 +80,45 @@ export default function ReferencePickerModal({
   const requestIdRef = useRef(0)
   const searchFnRef = useRef(searchLocalReferences)
 
+  // The search runs in a web worker, and everything about its failure mode is
+  // silent: `ReferenceIndexer.search()` posts a message and returns a promise that
+  // settles when the worker answers, so a worker that never starts leaves this
+  // hanging for ever - the list stays empty, nothing is logged, and it looks like
+  // the search box ignores the keyboard. That is exactly what happened in
+  // `DEVELOP_EXPERIMENT.MD` section 5.6, and a whole round was spent finding it.
+  // So the wait is bounded and the reason is named.
+  const searchWithTimeout = useCallback(
+    async (query: string) => {
+      const SEARCH_TIMEOUT_MS = 5000
+      let timer: ReturnType<typeof setTimeout>
+      try {
+        return await Promise.race([
+          searchFnRef.current(query),
+          new Promise<never>((_resolve, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('reference index worker timeout')),
+              SEARCH_TIMEOUT_MS
+            )
+          }),
+        ])
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[reference picker] the reference index did not answer within ' +
+            SEARCH_TIMEOUT_MS +
+            'ms, so the list stays empty. The index runs in a web worker; if it ' +
+            'never replies, the worker is not running (see DEVELOP_EXPERIMENT.MD ' +
+            'section 5.6). The citation completion reads the same index.',
+          error
+        )
+        return { hits: [] as { _source: Bib2JsonEntry }[] }
+      } finally {
+        clearTimeout(timer!)
+      }
+    },
+    []
+  )
+
   useEffect(() => {
     searchFnRef.current = searchLocalReferences
   }, [searchLocalReferences])
@@ -103,7 +142,7 @@ export default function ReferencePickerModal({
     const requestId = ++requestIdRef.current
 
     const perform = async () => {
-      const r = await searchFnRef.current('')
+      const r = await searchWithTimeout('')
 
       if (requestId !== requestIdRef.current) return
 
@@ -126,7 +165,7 @@ export default function ReferencePickerModal({
     const requestId = ++requestIdRef.current
 
     const perform = async () => {
-      const r = await searchFnRef.current(query.trim() || '')
+      const r = await searchWithTimeout(query.trim() || '')
 
       if (requestId !== requestIdRef.current) return
 

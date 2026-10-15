@@ -783,6 +783,13 @@ the repository - it needs the built bundle - but it is four small steps to rebui
 from this description, and it is what turned "the search box ignores me" into a
 named line of code.
 
+**And the silence is gone.** The picker's modal now bounds the wait
+(`reference-picker-modal.tsx`, our file, not the core's) and says what a timeout
+means: after five seconds it logs that the reference index did not answer, that the
+index runs in a web worker, and where the analysis is - instead of leaving a list
+that is simply empty for ever. That is the part of this worth keeping: an empty
+result and a dead worker looked identical, and they cost a round each.
+
 ---
 
 ## 6. Security findings fixed after the first port

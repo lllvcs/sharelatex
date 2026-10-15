@@ -103,6 +103,12 @@ const MARKERS = {
   // the modal marker above is in the bundle either way.
   'ol-cm-references-search-hint-inner':
     'modules/reference-picker/frontend/js/extensions/reference-search-hint.ts',
+  // The message the picker logs when the index worker does not answer. It is a
+  // marker like any other, and it is the one that proves the *bounded* search -
+  // the empty list a dead worker produces is otherwise indistinguishable from a
+  // project that cites nothing.
+  'the reference index did not answer':
+    'modules/reference-picker/frontend/js/components/reference-picker-modal.tsx',
   'workbench-ai-message':
     'modules/workbench/frontend/js/components/workbench-chat.tsx',
 }
