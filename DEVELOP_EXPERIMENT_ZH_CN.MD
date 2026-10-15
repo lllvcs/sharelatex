@@ -256,6 +256,27 @@ webpack 运行；打包产物是用*本*镜像的前端源码生成的，所以�
   `importOverleafModules('referenceIndices')`。该模块只提供另外三个注册表项，别的什么都
   不做；它的 `index.mjs` 是个空对象，所以它根本不在 `moduleImportSequence` 里。
 
+### 3.4 针对同一类错误审计整个 overlay
+
+两个移植来的功能已经发布、已经编译、通过了每一道检查——却在真实部署里不出现（§8.5）。那是一**类**错误，不是一次事故，所以按"一个名字必须对上的六个方向"对整个 overlay 做了抽取式审计。后三个方向是在前三个都干净之后才加的，因为"这一类里剩下的"不是三道检查能确立的事情：
+
+| 查了什么 | 怎么查 | 结果 |
+| --- | --- | --- |
+| 带 router 的模块、或 core 按名字索取的模块，能否被开关打开 | `overlay/services/web/modules` 里每个 `index.mjs` 对 `enabledModules()`；再把镜像 `app/src` 与 `frontend/js` 里每个 `hasFeature('X')` 对最终序列 | 2 个模块不可达（`symbol-palette`、`instance-features`）；都已修复，而且这道检查现在进了 `tests/verify-overlay.sh` 与 `tests/overlay-reachability.test.mjs` |
+| 某个注册表键被填了却没人要 | `settings.frontend.cjs` 填的 11 个键对镜像里每一个 `importOverleafModules('X')` | 11/11 都有消费者——没有死配置 |
+| core 索要的键在本镜像里是空的 | 同样抽取，再查该键在镜像 `settings.defaults.js` 里的初始化 | 46 个键，全都是本镜像没有移植的 Pro 功能（清单见下）——不是缺陷，而是未来移植的工作面 |
+| 前端会去取某个 URL | 移植模块里每个 `getJSON('/...')` 对序列中模块的 router | 2 个 URL（`/system/features`、`/workbench/access`），都有服务 |
+| 模块读了没人定义的设置 | 移植模块里的 `Settings.x` 对镜像的 `settings.defaults.js`、`settings.js` 与 overlay | 第一眼有 6 个像是未定义，实际 6 个都有——三个由模块自己设置，一个是路由局部变量；同一道检查在更早一轮抓到过唯一一个真案例（`clsi.docker.user`，§5） |
+| 组件读了没人写入的页面元数据 | 移植前端里每个 `getMeta('ol-...')` 对镜像的视图与 `app/src` | 13 个元数据全部有来源：共享的那些由 core 自己的视图写，管理面板的那些由 overlay 自己的视图（`manage-users-react.pug`、`manage-projects-react.pug`）写。有两个（`ol-workbenchDefaultModel`、`ol-workbenchDefaultTools`）读取时带显式默认值、却没有任何地方写入——连那个分支也没有——所以它们是"从未到达的运维覆盖项"，而不是缺陷 |
+
+最后一项检查的第一轮把 6 个设置和 6 个元数据报成未定义，而**十二个全是检查工具自己的假阳性**：它读了 `app/src` 却没读 `.pug` 视图（大多数元数据其实是在那里写入的），也只找了 `Settings.x =` 而没找通过 `res.locals` 的赋值。这一点值得记下来，因为审计自己的工具恰恰是最容易出错的一环：每一个命中都先人工确认再采信，十二个没有一个活过那一步。
+
+那 46 个空键值得留成清单，因为它们**就是**剩下的工作面：`sourceEditorToolbarComponents`、`sourceEditorToolbarButtonGroups`、`railActions`、`railModals`、`railPopovers`、`insertMenuSections`、`editorSidebarComponents`、`fileTreeToolbarComponents`、`settingsEntries`、`toastGenerators`、`menubarExtraComponents`、`sectionTitleGenerators`、`editorFloatingMenuActions`、`visualEditorProviders`、`sourceEditorVisualExtensions`、`sourceEditorCompletionSources`、`sourceEditorComponents`、`pythonRunner`、`createFileModes`、`devToolbar`、`trashPageTabs`、`contactUsModal`、`pdfPreviewPromotions`、`diagnosticActions`、`snapshotUtils`、`labsExperiments`、`usGovBanner`、`rollingBuildsUpdatedAlert`、`v1ImportDataScreen`、`integrationPanelComponents`，以及属于 Zotero 与 Mendeley 集成的 `tprFileView*` / `*LinkingWidgets` 那一组。
+
+**而那个分支填了 30 个键，本 overlay 填 11 个。** 这 19 个差额就是"下一次移植需要什么"的具体答案：`referenceLinkingWidgets`、`referenceSearchSetting` 与四个 `tprFileView*` 属于参考文献集成（Zotero、Mendeley）；`importProjectFromGithubMenu`、`importProjectFromGithubModalWrapper`、`editorLeftMenuSync`、`editorLeftMenuManageTemplate` 属于 GitHub；`pythonRunner`、`fullProjectSearchPanel`、`editorSidebarComponents`、`fileTreeToolbarComponents`、`sourceEditorToolbar*`、`menubarExtraComponents`、`insertMenuSections`、`sectionTitleGenerators`、`editorFloatingMenuActions`、`langFeedbackLinkingWidgets`、`contactUsModal` 属于其余部分。它们没有一个属于已经移植的三个功能：引用选择器需要的是 `referenceIndices`、`mainEditorLayoutModals` 与 `autoCompleteExtensions`，而 overlay 三个都填了。
+
+**审计的结论。** 一类缺陷、六种撞上的方式、**两例——就是被报告并修掉的那两例**。其余全部对得上：overlay 填的注册表键都有消费者，移植模块读的设置都有来源（模块自己、设置文件，或路由局部变量），移植组件读的元数据由 core 的视图或 overlay 自己的视图写入，前端取的两个 URL 都有服务，没有任何 `@modules/` 指向本 overlay 不提供的模块，每一个注册表路径都落到文件上。这一类现在两侧都有机械检查——仓库侧是 `tests/overlay-reachability.test.mjs`，镜像侧是 `tests/verify-overlay.sh` 里的功能名比对——而镜像侧那一道已经验证过：把 bug 放回去，它会失败。
+
 ---
 
 ## 4. 修订与审阅面板
@@ -528,6 +549,7 @@ AI 助手、管理面板与引用选择器都是在前端重建被证明可行�
 4. **一个解析不了的 import 会杀掉整个 web 服务**，因为模块列表是在启动时顺序 import 的。
 5. **模块清单同时就是功能开关，而这一点很容易被漏掉。** 对这些模块而言，`Features.hasFeature(name)` **就是** `Settings.moduleImportSequence.includes(name)`，而 core 前端据此门控界面——于是一个模块可以已经编进 bundle、代码完全正确，却永远不出现，只因为它的名字不在清单里。第一份真实 bug 报告的两半都出自这里：`symbol-palette` 的 `index.mjs` 什么都不注册，看起来像纯前端模块，于是没被放进序列，而项目页随后发的是 `ol-symbolPaletteAvailable: false`，编辑器因此从不渲染符号面板按钮；`instance-features` 唯一的职责是提供 `GET /system/features` 路由，被当作"纯依赖"漏掉了，于是助手的客户端 hook 拿到 404、回落到它自己的全禁用默认值——表现为一个置灰的面板，而不是一个缺失的面板。
    规则是：**只要有任何东西按名字来找这个模块，它就该进序列**——无论来找它的是注册表键、路由，还是一个 `hasFeature` 判断。只看 `index.mjs` 就下结论，正是这两处被漏掉的原因。
+   这两处都是**部署**发现的，不是测试发现的，所以随后按六个方向把整个 overlay 审计了一遍；§3.4 记录了查了什么、没有发现第三例，以及**第一轮的全部十二个发现都是检查工具自己的错**。会报缺陷的检查本身也得被检查。现在有两道窄口径的守卫：`tests/verify-overlay.sh`（镜像里，core 的 `hasFeature` 名字对序列）与 `tests/overlay-reachability.test.mjs`（仓库侧那一半），并且它做过反向验证：把 `OVERLEAF_ENABLE_SYMBOL_PALETTE` 关掉时，它报出的正是 `unreachable: ["symbol-palette"]`。
 6. **`OVERLEAF_CONFIG` 现在也是契约的一部分。** 它指向本镜像的设置文件；覆盖它的部署会悄无声息地丢掉模块注册，唯一的症状就是某个功能不见了。
 7. **提供方白名单不是代码。** 多主机部署需要在提供方登记所有回调地址（`OVERLEAF_OIDC_CALLBACK_URLS`），代码层面无法替代。
 8. **沙箱编译的部署那一半也不是代码**，而 toolkit 把它的那一半门控在 `SERVER_PRO` 上。
