@@ -509,6 +509,7 @@ RUN TLBIN=$(find /usr/local/texlive -maxdepth 3 -type d -name '*-linux' | head -
 # file that is out of sync with the rest of the application.
 RUN echo "5d5c62eb3c1d38ce8f5440e26bba2f598e01d9b42ac1310cec6d2659165e06a8  /overleaf/services/web/app/src/Features/Authentication/AuthenticationController.mjs" | sha256sum -c - \
     && echo "09199bb851219d53431507df913e04e6569b2670cd50c8f85c0a3d1d1fd6f6e2  /overleaf/services/web/app/src/router.mjs" | sha256sum -c - \
+    && echo "the base image matches the revision this overlay was written for" \
     || { echo "ERROR: the base image does not match the version the OIDC overlay in ./overlay was written for."; \
          echo "Re-base the overlay as described in overlay/README.md before using this base image."; \
          exit 1; }

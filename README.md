@@ -850,6 +850,22 @@ drives the base image version) is updated, the build fails instead of silently
 mixing the overlay with a newer application version. In that case, re-base the
 overlay as described in [overlay/README.md](overlay/README.md).
 
+**The build log contains the words "ERROR: the base image does not match" in
+every build, including successful ones.** Docker prints each `RUN` command before
+running it, and that sentence is part of the command - it is the message the step
+would print *if* it failed, so a log search for `ERROR` finds it every time. The
+step itself says which happened:
+
+```
+... AuthenticationController.mjs: OK
+... router.mjs: OK
+the base image matches the revision this overlay was written for
+```
+
+and a real mismatch prints `FAILED`, the two `ERROR:` lines as step output, and
+then stops the build with `ERROR: failed to build`. If the run's conclusion is
+`success`, the checksum matched.
+
 The overlay also depends on the *shape* of the CE image in several places that a
 base image update can change; the build checks them and fails with a message
 naming what to do:
