@@ -412,7 +412,7 @@ console.log('  the rebuilt manifest has ' + entrypoints.length + ' entrypoints, 
   # tests/frontend-rebuild.test.mjs checks the other direction: that these exact
   # strings are still in those components.
   missing=0
-  for marker in symbol-palette-close-button-outer references-search-modal ol-cm-references-search-hint-inner workbench-ai-message "the reference index did not answer" ; do
+  for marker in symbol-palette-close-button-outer references-search-modal ol-cm-references-search-hint-inner workbench-ai-message "the reference index did not answer" "the reference index is empty" ; do
     if grep -rlq "$marker" public/js ; then
       echo "  in the bundle: $marker"
     else

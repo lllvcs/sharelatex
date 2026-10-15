@@ -70,7 +70,7 @@ export default function ReferencePickerModal({
   initialKeys: string[]
 }) {
   const { t } = useTranslation()
-  const { searchLocalReferences } = useReferencesContext()
+  const { searchLocalReferences, referenceKeys } = useReferencesContext()
 
   const [query, setQuery] = useState('')
   const [selectedKeys, setSelectedKeys] = useState<string[]>([])
@@ -148,6 +148,23 @@ export default function ReferencePickerModal({
 
       setResults(r.hits)
 
+      // An empty picker has two very different causes and they look the same: the
+      // index never got the project's .bib files, or the project has none. The
+      // context's `referenceKeys` is the same index the citation completion reads,
+      // so when both are empty the reason is worth naming once, here, instead of
+      // leaving a blank list that could be either.
+      if (r.hits.length === 0 && referenceKeys.size === 0) {
+        // eslint-disable-next-line no-console
+        console.info(
+          '[reference picker] the reference index is empty: no citation keys were ' +
+            'found in this project. The index is built from the project\'s .bib ' +
+            'files (and the citation completion reads the same index), so check ' +
+            'that a .bib file exists and that it is set as the root bib document ' +
+            'in the editor settings. If it does, the worker that builds the index ' +
+            'is not running - see DEVELOP_EXPERIMENT.MD section 5.6.'
+        )
+      }
+
       if (pendingInitialKeysRef.current.length > 0) {
         // Preserve every existing key, even ones the local index can't resolve
         // (stale/oversized .bib, unresolved refs); otherwise Replace silently drops them.
@@ -157,7 +174,7 @@ export default function ReferencePickerModal({
     }
 
     perform()
-  }, [show, initialKeys])
+  }, [show, initialKeys, referenceKeys])
 
   useEffect(() => {
     if (!show) return
