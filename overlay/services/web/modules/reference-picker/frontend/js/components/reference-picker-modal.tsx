@@ -157,11 +157,15 @@ export default function ReferencePickerModal({
         // eslint-disable-next-line no-console
         console.info(
           '[reference picker] the reference index is empty: no citation keys were ' +
-            'found in this project. The index is built from the project\'s .bib ' +
-            'files (and the citation completion reads the same index), so check ' +
-            'that a .bib file exists and that it is set as the root bib document ' +
-            'in the editor settings. If it does, the worker that builds the index ' +
-            'is not running - see DEVELOP_EXPERIMENT.MD section 5.6.'
+            'found in this project. Three things produce this, in the order worth ' +
+            'checking. 1) The project has no .bib file, or it is not set as the ' +
+            'root bib document in the editor settings. 2) The snapshot the index is ' +
+            'built from could not be read: it starts with the project history ' +
+            '(GET /project/<id>/latest/history), and when that request fails the ' +
+            'indexing stops before it runs - a 500 there in the network tab is the ' +
+            'cause, not the .bib. 3) The worker that builds the index is not ' +
+            'running - see DEVELOP_EXPERIMENT.MD section 5.6. The citation ' +
+            'completion reads the same index and is empty for the same reason.'
         )
       }
 

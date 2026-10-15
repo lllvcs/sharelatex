@@ -192,10 +192,11 @@ docker rm tmp
 | `config/settings.frontend.cjs` | **new file**: the registry webpack reads when it rebuilds the frontend - eleven keys pointing at the components above, each written relative to the module directory so the file survives being copied to `/overleaf/services/web`. Without `OVERLEAF_CONFIG` webpack would read the base image's own copy of this file, which is empty for all eleven keys, and produce an empty bundle **with a green build** |
 
 ### The reference index (a base-image defect)
-
 | File | Change |
 | --- | --- |
 | `frontend/js/features/ide-react/references/reference-indexer.ts` | **changed**: it creates its worker as a *classic* worker instead of a module worker. Webpack emits that worker's chunk as a classic script whose chunk loader calls `importScripts`, and that chunk starts by loading two more chunks - so in a module worker the two loads fail, the entry module never runs, its message listener is never registered, and every `search` the reference picker makes stays pending for ever. The picker opened with a search box that ignored every keystroke, and the citation completion - which reads the same index - had no keys to offer. **This is a defect of `sharelatex/sharelatex:6.3.0` itself**: the same `importScripts` and the same `{ type: 'module' }` are in the base image, before anything was ported. Of the four workers in the image this is the only one that loads a second chunk, so it is the only one affected. `DEVELOP_EXPERIMENT.MD` §5.6 has the analysis and the two approaches that do not work |
+
+**The second way it comes up empty is not a defect at all**, and it is worth knowing because the symptom is identical: the index is built from the project *snapshot*, and building that snapshot starts with `flushHistory(projectId)` - `GET /project/<id>/latest/history`. If that request fails (a deployment whose history service is not reachable under the host name the web service was given, for instance), `ProjectSnapshot.initialize()` throws, `indexAllReferences()` stops at `await projectSnapshot.refresh()`, and `updateFromSnapshot()` is never called. The picker and the citation completion are then both empty and **nothing is logged by the server**, because the failure happened in the browser. The picker's own diagnostic message (in `reference-picker-modal.tsx`, this overlay) names this case; a 500 on `latest/history` in the network tab is the cause, not the `.bib` file. `DEVELOP_EXPERIMENT.MD` §5.7 has the chain.
 
 ### Settings
 

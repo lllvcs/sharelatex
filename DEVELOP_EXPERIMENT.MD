@@ -792,6 +792,54 @@ result and a dead worker looked identical, and they cost a round each.
 
 ---
 
+### 5.7 The same empty picker, from a failing history endpoint
+
+The diagnostic added in §5.6 fired in a real deployment and named the other half of
+the problem:
+
+```
+[reference picker] the reference index is empty: no citation keys were found in this project.
+```
+
+The worker was running - the two chunks it loads came back 200, which a module
+worker could never have requested - so the index had been *built* and was empty. The
+network tab of the same session showed why, in the stack of a request that had been
+failing all along for an unrelated reason:
+
+```
+GET /project/<id>/latest/history            500
+  at initialize / await in initialize / startRefresh / refresh
+```
+
+That chain is `ProjectSnapshot.refresh()`, and `initialize()` begins with
+`await flushHistory(projectId)` - the request above. So:
+
+1. the deployment tells the web service to reach its history service at
+   `http://overleaf:3100`, and nothing on that network answers to `overleaf`
+   (`getaddrinfo ENOTFOUND overleaf` in `web.log`);
+2. `/project/<id>/latest/history` therefore answers 500;
+3. `ProjectSnapshot.initialize()` throws, so `projectSnapshot.refresh()` rejects;
+4. `indexAllReferences()` awaits it and stops there - `updateFromSnapshot()` is
+   never called, and with it the `update` message that would have filled the index;
+5. the picker searches an index that was never built, and the citation completion
+   reads `referenceKeys` from that same empty index. Both are empty, and **the
+
+**The lesson is not about references.** The editor's file-tree snapshot is built from
+the project history, so a broken history endpoint silently disables every frontend
+feature that reads the snapshot - and the two that were noticed were noticed only
+because they are the ones someone was looking at. Before blaming a frontend feature
+in this image, check /project/<id>/latest/history: if it does not answer 200, the
+symptom under investigation is probably not its own.
+
+**What the image now does about it.** The picker's empty-index message names all
+three causes in the order worth checking - no .bib, an unreadable snapshot (this
+one), a worker that is not running - and says that the citation completion is empty
+for the same reason. The deployment fix is one variable: point V1_HISTORY_HOST at
+a host that resolves (127.0.0.1 works when the history service shares the
+container, which is what the deployment in question had: curl 127.0.0.1:3100
+answered {"message":"jwt missing"}).
+
+---
 ## 6. Security findings fixed after the first port
 
 The first working version logged people in; these three findings are what made it
