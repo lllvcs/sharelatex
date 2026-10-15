@@ -67,7 +67,16 @@ async function suggestFix(req, res) {
     }
   }
 
-  let docs
+  // The source of the file the error is in is a *bonus* for the model, not a
+  // requirement: plenty of log entries name something that is not a project
+  // document at all - `output.aux` and the other files the compile generates, or
+  // an absolute path into TeX Live such as
+  // `/usr/local/texlive/2026/texmf-dist/tex/latex/catoptions/catoptions.sty`.
+  // Answering `404 file_not_found` for those made the assistant fail on exactly
+  // the warnings and errors that are hardest to read, while the same request for
+  // `./main.tex` worked. It now answers either way, with the source when there is
+  // one and from the log text alone when there is not.
+  let docs = {}
   try {
     const path = logEntry.file
       .replace(/^\.\//, '')
@@ -78,22 +87,21 @@ async function suggestFix(req, res) {
       path,
       exactCaseMatch: true,
     })
-    if (type !== 'doc') {
-      return res.status(404).json({ error: 'file_not_found' })
+    if (type === 'doc') {
+      // Read synchronized edits without waiting for Docstore persistence.
+      const { lines } = await DocumentUpdaterHandler.promises.getDocument(
+        projectId,
+        element._id,
+        -1
+      )
+      docs = { [path]: { lines } }
     }
-    // Read synchronized edits without waiting for Docstore persistence.
-    const { lines } = await DocumentUpdaterHandler.promises.getDocument(
-      projectId,
-      element._id,
-      -1
-    )
-    docs = { [path]: { lines } }
   } catch (err) {
-    if (err.name === 'NotFoundError') {
-      return res.status(404).json({ error: 'file_not_found' })
+    if (err.name !== 'NotFoundError') {
+      // A read that fails for another reason is worth knowing about, but it still
+      // does not have to cost the user the answer.
+      logger.err({ err, projectId, userId }, 'suggest-fix: failed to load document')
     }
-    logger.err({ err, projectId, userId }, 'suggest-fix: failed to load document')
-    return res.status(500).json({ error: 'internal' })
   }
 
   // Custom SSE stream.

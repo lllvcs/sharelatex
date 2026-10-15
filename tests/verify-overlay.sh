@@ -198,6 +198,18 @@ try {
   errorAssistant.router.apply({ post: p => errorRoutes.push(p), get: p => errorRoutes.push(p) })
   if (!errorRoutes.some(r => r.includes('suggest-fix'))) throw new Error('error-assistant does not register the suggest-fix route')
 
+  // A log entry that names something which is not a project document is normal -
+  // `output.aux` and the other files a compile generates, or an absolute path into
+  // TeX Live. The route has to answer for those instead of rejecting them: it used
+  // to return `404 file_not_found`, which made the assistant work for `./main.tex`
+  // and fail for the warnings that are hardest to read, with nothing in the server
+  // log because the request never got past the handler.
+  const errorController = fs.readFileSync('./modules/error-assistant/app/src/ErrorAssistantController.mjs', 'utf8')
+  if (/status\(404\)[^)]*file_not_found/.test(errorController)) {
+    throw new Error('ErrorAssistantController still answers 404 file_not_found when the file is not a project document')
+  }
+  fs.writeSync(1, '  suggest-fix answers for generated files and package paths too\n')
+
   const instanceFeatures = (await import('./modules/instance-features/index.mjs')).default
   if (!instanceFeatures || !instanceFeatures.router) throw new Error('instance-features has no router')
   // This route is what the assistant asks for to learn whether the instance has
